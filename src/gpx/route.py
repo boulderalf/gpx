@@ -4,6 +4,8 @@ waypoints representing a series of turn points leading to a destination.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from lxml import etree
 
 from .element import Element
@@ -114,3 +116,77 @@ class Route(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
             route.append(_rtept._build(tag="rtept"))
 
         return route
+
+    def to_geojson(self) -> dict[str, Any]:
+        """Convert the route to a `GeoJSON <https://geojson.org/>`_ `Feature`."""
+        # construct the coordinates
+        coordinates = []
+        for rtept in self.rtepts:
+            coordinate = [rtept.lon, rtept.lat]
+            if rtept.ele is not None:
+                coordinate.append(rtept.ele)
+            coordinates.append(coordinate)
+
+        # construct the properties
+        properties: dict[str, Any] = {
+            "name": self.name,
+            "cmt": self.cmt,
+            "desc": self.desc,
+            "src": self.src,
+            "links": [link.to_dict() for link in self.links],
+            "number": self.number,
+            "type": self.type,
+        }
+
+        # filter out `None` values
+        properties = {k: v for k, v in properties.items() if v is not None}
+
+        # check for empty links
+        if not properties["links"]:
+            del properties["links"]
+
+        coordinates_properties = [
+            {
+                "time": rtept.time,
+                "magvar": rtept.magvar,
+                "geoidheight": rtept.geoidheight,
+                "name": rtept.name,
+                "cmt": rtept.cmt,
+                "desc": rtept.desc,
+                "src": rtept.src,
+                "links": [link.to_dict() for link in rtept.links],
+                "sym": rtept.sym,
+                "type": rtept.type,
+                "fix": rtept.fix,
+                "sat": rtept.sat,
+                "hdop": rtept.hdop,
+                "vdop": rtept.vdop,
+                "pdop": rtept.pdop,
+                "ageofdgpsdata": rtept.ageofdgpsdata,
+                "dgpsid": rtept.dgpsid,
+            }
+            for rtept in self.rtepts
+        ]
+
+        # filter out `None` values
+        coordinates_properties = [
+            {k: v for k, v in coordinate_properties.items() if v is not None}
+            for coordinate_properties in coordinates_properties
+        ]
+
+        # check for empty links
+        for coordinate_properties in coordinates_properties:
+            if not coordinate_properties["links"]:
+                del coordinate_properties["links"]
+
+        if any(coordinates_properties):
+            properties["coordinatesProperties"] = coordinates_properties
+
+        return {
+            "type": "Feature",
+            "properties": properties,
+            "geometry": {
+                "type": "LineString",
+                "coordinates": coordinates,
+            },
+        }

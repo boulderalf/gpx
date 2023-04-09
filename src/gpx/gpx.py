@@ -4,6 +4,7 @@ routes and tracks.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from .metadata import Metadata
 from .person import Person
 from .route import Route
 from .track import Track
-from .utils import remove_encoding_from_string
+from .utils import CustomJSONEncoder, remove_encoding_from_string
 from .waypoint import Waypoint
 
 
@@ -42,13 +43,16 @@ class GPX(Element):
     metadata: Metadata | None = None
 
     #: A list of waypoints.
-    waypoints: list[Waypoint] = []
+    wpts: list[Waypoint] = []
+    waypoints = wpts  #: Alias of :attr:`gpx.GPX.wpts`.
 
     #: A list of routes.
-    routes: list[Route] = []
+    rtes: list[Route] = []
+    routes = rtes  #: Alias of :attr:`gpx.GPX.rtes`.
 
     #: A list of tracks.
-    tracks: list[Track] = []
+    trks: list[Track] = []
+    tracks = trks  #: Alias of :attr:`gpx.GPX.trks`.
 
     @property
     def name(self) -> str | None:
@@ -306,3 +310,28 @@ class GPX(Element):
         gpx_tree.write(
             str(gpx_file), pretty_print=True, xml_declaration=True, encoding="utf-8"
         )
+
+    def to_geojson(self, geojson_file: str | Path) -> None:
+        """Convert the GPX instance to a `GeoJSON <https://geojson.org/>`_ `FeatureCollection`.
+
+        Args:
+            geojson_file: The file to write the GeoJSON data to.
+        """
+        features = []
+
+        for waypoint in self.waypoints:
+            features.append(waypoint.to_geojson())
+
+        for route in self.routes:
+            features.append(route.to_geojson())
+
+        for track in self.tracks:
+            features.append(track.to_geojson())
+
+        geojson = {
+            "type": "FeatureCollection",
+            "features": features,
+        }
+
+        with open(geojson_file, "w", encoding="utf-8") as fh:
+            json.dump(geojson, fh, indent=4, cls=CustomJSONEncoder)

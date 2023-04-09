@@ -58,3 +58,15 @@ class Link(Element):
             _type.text = self.type
 
         return link
+
+    def to_dict(self) -> dict[str, str]:
+        """Converts the link to a dictionary."""
+        return {
+            k: v
+            for k, v in {
+                "href": self.href,
+                "text": self.text,
+                "type": self.type,
+            }.items()
+            if v is not None
+        }

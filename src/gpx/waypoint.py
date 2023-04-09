@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 from math import atan2, cos, radians, sin, sqrt
+from typing import Any
 
 from dateutil.parser import isoparse
 from lxml import etree
@@ -11,6 +12,7 @@ from lxml import etree
 from .element import Element
 from .link import Link
 from .types import Degrees, DGPSStation, Fix, Latitude, Longitude
+from .utils import format_datetime
 
 
 class Waypoint(Element):
@@ -179,9 +181,7 @@ class Waypoint(Element):
 
         if self.time is not None:
             time = etree.SubElement(waypoint, "time", nsmap=self._nsmap)
-            time.text = self.time.isoformat(
-                timespec="milliseconds" if self.time.microsecond else "seconds"
-            ).replace("+00:00", "Z")
+            time.text = format_datetime(self.time)
 
         if self.magvar is not None:
             magvar = etree.SubElement(waypoint, "magvar", nsmap=self._nsmap)
@@ -249,6 +249,46 @@ class Waypoint(Element):
             dgpsid.text = str(self.dgpsid)
 
         return waypoint
+
+    def to_geojson(self) -> dict[str, Any]:
+        """Convert the waypoint to a `GeoJSON <https://geojson.org/>`_ `Feature`."""
+        # construct the coordinates
+        coordinates = [self.lon, self.lat]
+        if self.ele is not None:
+            coordinates.append(self.ele)
+
+        # construct the properties
+        properties = {
+            "time": self.time,
+            "magvar": self.magvar,
+            "geoidheight": self.geoidheight,
+            "name": self.name,
+            "cmt": self.cmt,
+            "desc": self.desc,
+            "src": self.src,
+            "links": [link.to_dict() for link in self.links],
+            "sym": self.sym,
+            "type": self.type,
+            "fix": self.fix,
+            "sat": self.sat,
+            "hdop": self.hdop,
+            "vdop": self.vdop,
+            "pdop": self.pdop,
+            "ageofdgpsdata": self.ageofdgpsdata,
+            "dgpsid": self.dgpsid,
+        }
+
+        # filter out `None` values
+        properties = {k: v for k, v in properties.items() if v is not None}
+
+        return {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": coordinates,
+            },
+            "properties": properties,
+        }
 
     def distance_to(self, other: Waypoint, radius: int = 6_378_137) -> float:
         """Returns the distance to the other waypoint (in metres) using a simple

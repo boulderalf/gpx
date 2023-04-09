@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Iterator
+from typing import Any, Iterator
 
 from lxml import etree
 
@@ -132,6 +132,90 @@ class Track(Element):
             track.append(segment._build())
 
         return track
+
+    def to_geojson(self) -> dict[str, Any]:
+        """Convert the track to a `GeoJSON <https://geojson.org/>`_ `Feature`."""
+        # construct the coordinates
+        coordinates = []
+        for trkseg in self.trksegs:
+            segment = []
+            for trkpt in trkseg:
+                coordinate = [trkpt.lon, trkpt.lat]
+                if trkpt.ele is not None:
+                    coordinate.append(trkpt.ele)
+                segment.append(coordinate)
+            coordinates.append(segment)
+
+        # construct the properties
+        properties: dict[str, Any] = {
+            "name": self.name,
+            "cmt": self.cmt,
+            "desc": self.desc,
+            "src": self.src,
+            "links": [link.to_dict() for link in self.links],
+            "number": self.number,
+            "type": self.type,
+        }
+
+        # filter out `None` values
+        properties = {k: v for k, v in properties.items() if v is not None}
+
+        # check for empty links
+        if not properties["links"]:
+            del properties["links"]
+
+        coordinates_properties = [
+            [
+                {
+                    "time": trkpt.time,
+                    "magvar": trkpt.magvar,
+                    "geoidheight": trkpt.geoidheight,
+                    "name": trkpt.name,
+                    "cmt": trkpt.cmt,
+                    "desc": trkpt.desc,
+                    "src": trkpt.src,
+                    "links": [link.to_dict() for link in trkpt.links],
+                    "sym": trkpt.sym,
+                    "type": trkpt.type,
+                    "fix": trkpt.fix,
+                    "sat": trkpt.sat,
+                    "hdop": trkpt.hdop,
+                    "vdop": trkpt.vdop,
+                    "pdop": trkpt.pdop,
+                    "ageofdgpsdata": trkpt.ageofdgpsdata,
+                    "dgpsid": trkpt.dgpsid,
+                }
+                for trkpt in trkseg
+            ]
+            for trkseg in self.trksegs
+        ]
+
+        # filter out `None` values
+        coordinates_properties = [
+            [
+                {k: v for k, v in coordinate_properties.items() if v is not None}
+                for coordinate_properties in trkseg
+            ]
+            for trkseg in coordinates_properties
+        ]
+
+        # check for empty links
+        for _trkseg in coordinates_properties:
+            for coordinate_properties in _trkseg:
+                if not coordinate_properties["links"]:
+                    del coordinate_properties["links"]
+
+        if any([any(cp) for cp in coordinates_properties]):
+            properties["coordinatesProperties"] = coordinates_properties
+
+        return {
+            "type": "Feature",
+            "geometry": {
+                "type": "MultiLineString",
+                "coordinates": coordinates,
+            },
+            "properties": properties,
+        }
 
     @property
     def bounds(self) -> tuple[Latitude, Longitude, Latitude, Longitude]:

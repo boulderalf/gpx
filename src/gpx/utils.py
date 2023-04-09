@@ -1,5 +1,9 @@
 """This module contains various utility functions."""
 import re
+from datetime import datetime
+from decimal import Decimal
+from json import JSONEncoder
+from typing import Any
 
 
 def remove_encoding_from_string(s: str) -> str:
@@ -14,3 +18,32 @@ def remove_encoding_from_string(s: str) -> str:
         The string with any encoding declarations removed.
     """
     return re.sub(r"(encoding=[\"\'].+[\"\'])", "", s)
+
+
+def format_datetime(dt: datetime) -> str:
+    """
+    Formats a datetime object to the format used in GPX files.
+
+    Args:
+        dt: The datetime object.
+
+    Returns:
+        The formatted datetime string.
+    """
+    return dt.isoformat(
+        timespec="milliseconds" if dt.microsecond else "seconds"
+    ).replace("+00:00", "Z")
+
+
+class CustomJSONEncoder(JSONEncoder):
+    """Custom JSON encoder."""
+
+    def default(self, obj: Any) -> Any:
+        """Convert `obj` to a JSON serializable type. Overrides the default
+        `JSONEncoder` of `Flask`.
+        """
+        if isinstance(obj, datetime):
+            return format_datetime(obj)
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
