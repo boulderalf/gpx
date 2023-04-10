@@ -35,24 +35,27 @@ class GPX(Element):
         element: The GPX XML element. Defaults to `None`.
     """
 
-    #: The name or URL of the software that created your GPX document. Defaults
-    #: to "PyGPX".
-    creator: str = "PyGPX"
+    def __init__(self, element: etree._Element | None = None) -> None:
+        super().__init__(element)
 
-    #: Metadata about the file.
-    metadata: Metadata | None = None
+        #: The name or URL of the software that created your GPX document.
+        #: Defaults to "PyGPX".
+        self.creator: str = "PyGPX"
 
-    #: A list of waypoints.
-    wpts: list[Waypoint] = []
-    waypoints = wpts  #: Alias of :attr:`gpx.GPX.wpts`.
+        #: Metadata about the file.
+        self.metadata: Metadata | None = None
 
-    #: A list of routes.
-    rtes: list[Route] = []
-    routes = rtes  #: Alias of :attr:`gpx.GPX.rtes`.
+        #: A list of waypoints.
+        self.waypoints: list[Waypoint] = []
 
-    #: A list of tracks.
-    trks: list[Track] = []
-    tracks = trks  #: Alias of :attr:`gpx.GPX.trks`.
+        #: A list of routes.
+        self.routes: list[Route] = []
+
+        #: A list of tracks.
+        self.tracks: list[Track] = []
+
+        if self._element is not None:
+            self._parse()
 
     @property
     def name(self) -> str | None:
