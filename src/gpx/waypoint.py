@@ -1,10 +1,12 @@
 """This module provides a Waypoint object to contain GPX waypoints."""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 from math import atan2, cos, radians, sin, sqrt
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 from dateutil.parser import isoparse
 from lxml import etree
@@ -12,7 +14,7 @@ from lxml import etree
 from .element import Element
 from .link import Link
 from .types import Degrees, DGPSStation, Fix, Latitude, Longitude
-from .utils import format_datetime
+from .utils import CustomJSONEncoder, filter_geojson_properties, format_datetime
 
 
 class Waypoint(Element):
@@ -256,13 +258,21 @@ class Waypoint(Element):
 
         return waypoint
 
-    def to_geojson(self) -> dict[str, Any]:
-        """Convert the waypoint to a `GeoJSON <https://geojson.org/>`_ `Feature`."""
-        # construct the coordinates
+    @property
+    def _geojson_coordinates(self) -> list[Decimal]:
+        """The GeoJSON-compatible coordinates of the waypoint.
+
+        The coordinates are of the form [lon, lat, ele (alt)], where ele is
+        optional.
+        """
         coordinates = [self.lon, self.lat]
         if self.ele is not None:
             coordinates.append(self.ele)
+        return coordinates
 
+    @property
+    def _geojson_properties(self) -> dict[str, Any]:
+        """The GeoJSON-compatible properties of the waypoint."""
         # construct the properties
         properties = {
             "time": self.time,
@@ -284,17 +294,78 @@ class Waypoint(Element):
             "dgpsid": self.dgpsid,
         }
 
-        # filter out `None` values
-        properties = {k: v for k, v in properties.items() if v is not None}
+        # filter out `None` values and remove empty links
+        properties = filter_geojson_properties(properties)
 
-        return {
-            "type": "Feature",
-            "geometry": {
-                "type": "Point",
-                "coordinates": coordinates,
-            },
-            "properties": properties,
+        return properties
+
+    def to_geojson(
+        self, type: Literal["Point", "Feature"] = "Feature"
+    ) -> dict[str, Any]:
+        """Convert the waypoint to a `GeoJSON <https://geojson.org/>`_ object.
+
+        By default, the waypoint is converted to a GeoJSON `Feature` object
+        instead of a `Point` object. This way, we can add additional properties
+        (i.e. metadata) to the GeoJSON object.
+
+        Args:
+            type: The type of GeoJSON object to create. Defaults to `Feature`.
+
+        Returns:
+            The GeoJSON object.
+        """
+        # construct the coordinates
+        coordinates = self._geojson_coordinates
+
+        # construct the `Point` geometry
+        point_geojson = {
+            "type": "Point",
+            "coordinates": coordinates,
         }
+
+        if type == "Point":
+            return point_geojson
+
+        # construct the properties
+        properties = self._geojson_properties
+
+        # construct the `Feature` object
+        feature_geojson = {
+            "type": "Feature",
+            "geometry": point_geojson,
+        }
+
+        if properties:
+            feature_geojson["properties"] = properties
+
+        return feature_geojson
+
+    @property
+    def __geo_interface__(self) -> dict[str, Any]:
+        """Represents the waypoint as a GeoJSON-like `Point` object.
+
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like
+        protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
+        """
+        return self.to_geojson(type="Point")
+
+    def to_geojson_file(
+        self, geojson_file: str | Path, type: Literal["Point", "Feature"] = "Feature"
+    ) -> None:
+        """Convert the waypoint to a `GeoJSON <https://geojson.org/>`_ file.
+
+        By default, the waypoint is converted to a GeoJSON `Feature` object
+        instead of a `Point` object. This way, we can add additional properties
+        (i.e. metadata) to the GeoJSON object.
+
+        Args:
+            geojson_file: The file to write the GeoJSON object to.
+            type: The type of GeoJSON object to create. Defaults to `Feature`.
+        """
+        with open(geojson_file, "w", encoding="utf-8") as fh:
+            json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
 
     def distance_to(self, other: Waypoint, radius: int = 6_378_137) -> float:
         """Returns the distance to the other waypoint (in metres) using a simple

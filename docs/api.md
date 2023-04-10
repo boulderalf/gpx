@@ -5,6 +5,7 @@
 ```{eval-rst}
 .. automodule:: gpx.gpx
     :members:
+    :special-members: __geo_interface__
 ```
 
 ## `gpx.metadata` Module
@@ -19,6 +20,7 @@
 ```{eval-rst}
 .. automodule:: gpx.waypoint
     :members:
+    :special-members: __geo_interface__
 ```
 
 ## `gpx.route` Module
@@ -26,6 +28,7 @@
 ```{eval-rst}
 .. automodule:: gpx.route
     :members:
+    :special-members: __geo_interface__
 ```
 
 ## `gpx.track` Module
@@ -33,6 +36,7 @@
 ```{eval-rst}
 .. automodule:: gpx.track
     :members:
+    :special-members: __geo_interface__
 ```
 
 ## `gpx.track_segment` Module
@@ -40,6 +44,7 @@
 ```{eval-rst}
 .. automodule:: gpx.track_segment
     :members:
+    :special-members: __geo_interface__
 ```
 
 ## `gpx.copyright` Module

@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Literal
 
 from lxml import etree
 
@@ -20,7 +21,10 @@ from .metadata import Metadata
 from .person import Person
 from .route import Route
 from .track import Track
-from .utils import CustomJSONEncoder, remove_encoding_from_string
+from .utils import (
+    CustomJSONEncoder,
+    remove_encoding_from_string,
+)
 from .waypoint import Waypoint
 
 
@@ -314,27 +318,77 @@ class GPX(Element):
             str(gpx_file), pretty_print=True, xml_declaration=True, encoding="utf-8"
         )
 
-    def to_geojson(self, geojson_file: str | Path) -> None:
-        """Convert the GPX instance to a `GeoJSON <https://geojson.org/>`_ `FeatureCollection`.
+    def to_geojson(
+        self,
+        type: Literal["GeometryCollection", "FeatureCollection"] = "FeatureCollection",
+    ) -> dict[str, Any]:
+        """Convert the GPX instance to a `GeoJSON <https://geojson.org/>`_ object.
+
+        By default, the GPX instance is converted to a GeoJSON `FeatureCollection`
+        object instead of a `GeometryCollection` object. This way, we can add
+        additional properties (i.e. metadata) to the GeoJSON object.
 
         Args:
-            geojson_file: The file to write the GeoJSON data to.
+            type: The type of GeoJSON object to create. Defaults to `FeatureCollection`.
+
+        Returns:
+            The GeoJSON object.
         """
-        features = []
+        if type == "GeometryCollection":
+            # construct geometries
+            geometries = [
+                gpx_obj.__geo_interface__
+                for gpx_obj in self.waypoints + self.routes + self.tracks
+            ]
 
-        for waypoint in self.waypoints:
-            features.append(waypoint.to_geojson())
+            # construct the `GeometryCollection` object
+            geometry_collection_geojson = {
+                "type": "GeometryCollection",
+                "geometries": geometries,
+            }
 
-        for route in self.routes:
-            features.append(route.to_geojson())
+            return geometry_collection_geojson
 
-        for track in self.tracks:
-            features.append(track.to_geojson())
+        # construct features
+        features = [
+            gpx_obj.to_geojson()
+            for gpx_obj in self.waypoints + self.routes + self.tracks
+        ]
 
-        geojson = {
+        # construct the `FeatureCollection` object
+        feature_collection_geojson = {
             "type": "FeatureCollection",
             "features": features,
         }
 
+        return feature_collection_geojson
+
+    @property
+    def __geo_interface__(self) -> dict[str, Any]:
+        """Represents the GPX instance as a GeoJSON-like `GeometryCollection`
+        object.
+
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like
+        protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
+        """
+        return self.to_geojson(type="GeometryCollection")
+
+    def to_geojson_file(
+        self,
+        geojson_file: str | Path,
+        type: Literal["GeometryCollection", "FeatureCollection"] = "FeatureCollection",
+    ) -> None:
+        """Convert the GPX instance to a `GeoJSON <https://geojson.org/>`_ file.
+
+        By default, the GPX instance is converted to a GeoJSON `FeatureCollection`
+        object instead of a `GeometryCollection` object. This way, we can add
+        additional properties (i.e. metadata) to the GeoJSON object.
+
+        Args:
+            geojson_file: The file to write the GeoJSON object to.
+            type: The type of GeoJSON object to create. Defaults to `FeatureCollection`.
+        """
         with open(geojson_file, "w", encoding="utf-8") as fh:
-            json.dump(geojson, fh, indent=4, cls=CustomJSONEncoder)
+            json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)

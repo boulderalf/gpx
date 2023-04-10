@@ -1,12 +1,14 @@
 """
-This module provides a Track object to contain GPX routes - an ordered list of
+This module provides a Track object to contain GPX tracks - an ordered list of
 points describing a path.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Iterator
+from pathlib import Path
+from typing import Any, Iterator, Literal
 
 from lxml import etree
 
@@ -14,6 +16,7 @@ from .element import Element
 from .link import Link
 from .track_segment import TrackSegment
 from .types import Latitude, Longitude
+from .utils import CustomJSONEncoder, filter_geojson_properties
 
 
 class Track(Element):
@@ -139,18 +142,35 @@ class Track(Element):
 
         return track
 
-    def to_geojson(self) -> dict[str, Any]:
-        """Convert the track to a `GeoJSON <https://geojson.org/>`_ `Feature`."""
+    def to_geojson(
+        self, type: Literal["MultiLineString", "Feature"] = "Feature"
+    ) -> dict[str, Any]:
+        """Convert the track to a `GeoJSON <https://geojson.org/>`_ object.
+
+        By default, the track is converted to a GeoJSON `Feature` object instead
+        of a `MultiLineString` object. This way, we can add additional
+        properties (i.e. metadata) to the GeoJSON object.
+
+        Args:
+            type: The type of GeoJSON object to create. Defaults to `Feature`.
+
+        Returns:
+            The GeoJSON object.
+        """
         # construct the coordinates
-        coordinates = []
-        for trkseg in self.trksegs:
-            segment = []
-            for trkpt in trkseg:
-                coordinate = [trkpt.lon, trkpt.lat]
-                if trkpt.ele is not None:
-                    coordinate.append(trkpt.ele)
-                segment.append(coordinate)
-            coordinates.append(segment)
+        coordinates = [
+            [trkpt._geojson_coordinates for trkpt in trkseg.trkpts]
+            for trkseg in self.trksegs
+        ]
+
+        # construct the `MultiLineString` geometry
+        multilinestring_geojson = {
+            "type": "MultiLineString",
+            "coordinates": coordinates,
+        }
+
+        if type == "MultiLineString":
+            return multilinestring_geojson
 
         # construct the properties
         properties: dict[str, Any] = {
@@ -163,65 +183,56 @@ class Track(Element):
             "type": self.type,
         }
 
-        # filter out `None` values
-        properties = {k: v for k, v in properties.items() if v is not None}
+        # filter out `None` values and remove empty links
+        properties = filter_geojson_properties(properties)
 
-        # check for empty links
-        if not properties["links"]:
-            del properties["links"]
-
+        # add the coordinates properties (if any)
         coordinates_properties = [
-            [
-                {
-                    "time": trkpt.time,
-                    "magvar": trkpt.magvar,
-                    "geoidheight": trkpt.geoidheight,
-                    "name": trkpt.name,
-                    "cmt": trkpt.cmt,
-                    "desc": trkpt.desc,
-                    "src": trkpt.src,
-                    "links": [link.to_dict() for link in trkpt.links],
-                    "sym": trkpt.sym,
-                    "type": trkpt.type,
-                    "fix": trkpt.fix,
-                    "sat": trkpt.sat,
-                    "hdop": trkpt.hdop,
-                    "vdop": trkpt.vdop,
-                    "pdop": trkpt.pdop,
-                    "ageofdgpsdata": trkpt.ageofdgpsdata,
-                    "dgpsid": trkpt.dgpsid,
-                }
-                for trkpt in trkseg
-            ]
+            [trkpt._geojson_properties for trkpt in trkseg.trkpts]
             for trkseg in self.trksegs
         ]
-
-        # filter out `None` values
-        coordinates_properties = [
-            [
-                {k: v for k, v in coordinate_properties.items() if v is not None}
-                for coordinate_properties in trkseg
-            ]
-            for trkseg in coordinates_properties
-        ]
-
-        # check for empty links
-        for _trkseg in coordinates_properties:
-            for coordinate_properties in _trkseg:
-                if not coordinate_properties["links"]:
-                    del coordinate_properties["links"]
-
         if any([any(cp) for cp in coordinates_properties]):
             properties["coordinatesProperties"] = coordinates_properties
 
-        return {
+        # construct the `Feature` object
+        feature_geojson = {
             "type": "Feature",
-            "geometry": {
-                "type": "MultiLineString",
-                "coordinates": coordinates,
-            },
-            "properties": properties,
+            "geometry": multilinestring_geojson,
         }
+
+        if properties:
+            feature_geojson["properties"] = properties
+
+        return feature_geojson
+
+    @property
+    def __geo_interface__(self) -> dict[str, Any]:
+        """Represents the track as a GeoJSON-like `MultiLineString` object.
+
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like
+        protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
+        """
+        return self.to_geojson(type="MultiLineString")
+
+    def to_geojson_file(
+        self,
+        geojson_file: str | Path,
+        type: Literal["MultiLineString", "Feature"] = "Feature",
+    ) -> None:
+        """Convert the track to a `GeoJSON <https://geojson.org/>`_ file.
+
+        By default, the track is converted to a GeoJSON `Feature` object instead
+        of a `MultiLineString` object. This way, we can add additional
+        properties (i.e. metadata) to the GeoJSON object.
+
+        Args:
+            geojson_file: The file to write the GeoJSON object to.
+            type: The type of GeoJSON object to create. Defaults to `Feature`.
+        """
+        with open(geojson_file, "w", encoding="utf-8") as fh:
+            json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
 
     @property
     def bounds(self) -> tuple[Latitude, Longitude, Latitude, Longitude]:

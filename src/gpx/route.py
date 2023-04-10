@@ -4,13 +4,16 @@ waypoints representing a series of turn points leading to a destination.
 """
 from __future__ import annotations
 
-from typing import Any
+import json
+from pathlib import Path
+from typing import Any, Literal
 
 from lxml import etree
 
 from .element import Element
 from .link import Link
 from .mixins import PointsMutableSequenceMixin, PointsStatisticsMixin
+from .utils import CustomJSONEncoder, filter_geojson_properties
 from .waypoint import Waypoint
 
 
@@ -123,18 +126,35 @@ class Route(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
 
         return route
 
-    def to_geojson(self) -> dict[str, Any]:
-        """Convert the route to a `GeoJSON <https://geojson.org/>`_ `Feature`."""
+    def to_geojson(
+        self, type: Literal["LineString", "Feature"] = "Feature"
+    ) -> dict[str, Any]:
+        """Convert the route to a `GeoJSON <https://geojson.org/>`_ object.
+
+        By default, the route is converted to a GeoJSON `Feature` object instead
+        of a `LineString` object. This way, we can add additional properties
+        (i.e. metadata) to the GeoJSON object.
+
+        Args:
+            type: The type of GeoJSON object to create. Defaults to `Feature`.
+
+        Returns:
+            The GeoJSON object.
+        """
         # construct the coordinates
-        coordinates = []
-        for rtept in self.rtepts:
-            coordinate = [rtept.lon, rtept.lat]
-            if rtept.ele is not None:
-                coordinate.append(rtept.ele)
-            coordinates.append(coordinate)
+        coordinates = [rtept._geojson_coordinates for rtept in self.rtepts]
+
+        # construct the `LineString` geometry
+        linestring_geojson = {
+            "type": "LineString",
+            "coordinates": coordinates,
+        }
+
+        if type == "LineString":
+            return linestring_geojson
 
         # construct the properties
-        properties: dict[str, Any] = {
+        properties = {
             "name": self.name,
             "cmt": self.cmt,
             "desc": self.desc,
@@ -144,55 +164,50 @@ class Route(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
             "type": self.type,
         }
 
-        # filter out `None` values
-        properties = {k: v for k, v in properties.items() if v is not None}
+        # filter out `None` values and remove empty links
+        properties = filter_geojson_properties(properties)
 
-        # check for empty links
-        if not properties["links"]:
-            del properties["links"]
-
-        coordinates_properties = [
-            {
-                "time": rtept.time,
-                "magvar": rtept.magvar,
-                "geoidheight": rtept.geoidheight,
-                "name": rtept.name,
-                "cmt": rtept.cmt,
-                "desc": rtept.desc,
-                "src": rtept.src,
-                "links": [link.to_dict() for link in rtept.links],
-                "sym": rtept.sym,
-                "type": rtept.type,
-                "fix": rtept.fix,
-                "sat": rtept.sat,
-                "hdop": rtept.hdop,
-                "vdop": rtept.vdop,
-                "pdop": rtept.pdop,
-                "ageofdgpsdata": rtept.ageofdgpsdata,
-                "dgpsid": rtept.dgpsid,
-            }
-            for rtept in self.rtepts
-        ]
-
-        # filter out `None` values
-        coordinates_properties = [
-            {k: v for k, v in coordinate_properties.items() if v is not None}
-            for coordinate_properties in coordinates_properties
-        ]
-
-        # check for empty links
-        for coordinate_properties in coordinates_properties:
-            if not coordinate_properties["links"]:
-                del coordinate_properties["links"]
-
+        # add the coordinates properties (if any)
+        coordinates_properties = [rtept._geojson_properties for rtept in self.rtepts]
         if any(coordinates_properties):
             properties["coordinatesProperties"] = coordinates_properties
 
-        return {
+        # construct the `Feature` object
+        feature_geojson = {
             "type": "Feature",
-            "properties": properties,
-            "geometry": {
-                "type": "LineString",
-                "coordinates": coordinates,
-            },
+            "geometry": linestring_geojson,
         }
+
+        if properties:
+            feature_geojson["properties"] = properties
+
+        return feature_geojson
+
+    @property
+    def __geo_interface__(self) -> dict[str, Any]:
+        """Represents the route as a GeoJSON-like `LineString` object.
+
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like
+        protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
+        """
+        return self.to_geojson(type="LineString")
+
+    def to_geojson_file(
+        self,
+        geojson_file: str | Path,
+        type: Literal["LineString", "Feature"] = "Feature",
+    ) -> None:
+        """Convert the route to a `GeoJSON <https://geojson.org/>`_ file.
+
+        By default, the route is converted to a GeoJSON `Feature` object instead
+        of a `LineString` object. This way, we can add additional properties
+        (i.e. metadata) to the GeoJSON object.
+
+        Args:
+            geojson_file: The file to write the GeoJSON object to.
+            type: The type of GeoJSON object to create. Defaults to `Feature`.
+        """
+        with open(geojson_file, "w", encoding="utf-8") as fh:
+            json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)

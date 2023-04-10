@@ -47,3 +47,18 @@ class CustomJSONEncoder(JSONEncoder):
         if isinstance(obj, Decimal):
             return float(obj)
         return super().default(obj)
+
+
+def filter_geojson_properties(geojson_properties: dict[str, Any]) -> dict[str, Any]:
+    """
+    Filters out `None` values from the GeoJSON properties, as well as removing
+    empty links.
+    """
+    # filter out `None` values
+    geojson_properties = {k: v for k, v in geojson_properties.items() if v is not None}
+
+    # remove empty links
+    if not any(geojson_properties["links"]):
+        geojson_properties.pop("links")
+
+    return geojson_properties
