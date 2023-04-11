@@ -259,16 +259,17 @@ class Waypoint(Element):
         return waypoint
 
     @property
-    def _geojson_coordinates(self) -> list[Decimal]:
+    def _geojson_coordinates(
+        self,
+    ) -> tuple[Longitude, Latitude] | tuple[Longitude, Latitude, Decimal]:
         """The GeoJSON-compatible coordinates of the waypoint.
 
         The coordinates are of the form [lon, lat, ele (alt)], where ele is
         optional.
         """
-        coordinates = [self.lon, self.lat]
         if self.ele is not None:
-            coordinates.append(self.ele)
-        return coordinates
+            return self.lon, self.lat, self.ele
+        return self.lon, self.lat
 
     @property
     def _geojson_properties(self) -> dict[str, Any]:
