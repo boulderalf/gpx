@@ -142,6 +142,41 @@ class Track(Element):
 
         return track
 
+    @property
+    def _geojson_bounds(
+        self,
+    ) -> (
+        tuple[Longitude, Latitude, Longitude, Latitude]
+        | tuple[Longitude, Latitude, Decimal, Longitude, Latitude, Decimal]
+    ):
+        """The GeoJSON-compatible bounds.
+
+        The bounds are of the form (minlon, minlat, minele (alt), maxlon,
+        maxlat, maxele (alt)], where ele is optional.
+        """
+        min_lat, min_lon, max_lat, max_lon = self.bounds
+
+        # possibly include elevation bounds
+        if any(
+            trkpt.ele is not None for trkseg in self.trksegs for trkpt in trkseg.trkpts
+        ):
+            # determine elevation bounds
+            min_ele = min(
+                trkpt.ele
+                for trkseg in self.trksegs
+                for trkpt in trkseg.trkpts
+                if trkpt.ele is not None
+            )
+            max_ele = max(
+                trkpt.ele
+                for trkseg in self.trksegs
+                for trkpt in trkseg.trkpts
+                if trkpt.ele is not None
+            )
+            return min_lon, min_lat, min_ele, max_lon, max_lat, max_ele
+
+        return min_lon, min_lat, max_lon, max_lat
+
     def to_geojson(
         self, type: Literal["MultiLineString", "Feature"] = "Feature"
     ) -> dict[str, Any]:
@@ -166,6 +201,7 @@ class Track(Element):
         # construct the `MultiLineString` geometry
         multilinestring_geojson = {
             "type": "MultiLineString",
+            "bbox": self._geojson_bounds,
             "coordinates": coordinates,
         }
 

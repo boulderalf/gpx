@@ -79,6 +79,7 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
         # construct the `LineString` geometry
         linestring_geojson = {
             "type": "LineString",
+            "bbox": self._geojson_bounds,
             "coordinates": coordinates,
         }
 

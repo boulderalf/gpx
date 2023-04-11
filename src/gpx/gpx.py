@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -321,6 +322,67 @@ class GPX(Element):
             str(gpx_file), pretty_print=True, xml_declaration=True, encoding="utf-8"
         )
 
+    @property
+    def _geojson_bounds(
+        self,
+    ) -> (
+        tuple[Decimal, Decimal, Decimal, Decimal]
+        | tuple[Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]
+    ):
+        """The GeoJSON-compatible bounds.
+
+        The bounds are of the form (minlon, minlat, minele (alt), maxlon,
+        maxlat, maxele (alt)], where ele is optional.
+        """
+        min_lon, max_lon = Decimal("Infinity"), Decimal("-Infinity")
+        min_lat, max_lat = Decimal("Infinity"), Decimal("-Infinity")
+        min_ele, max_ele = Decimal("Infinity"), Decimal("-Infinity")
+
+        for wpt in self.wpts:
+            min_lon = min(min_lon, wpt.lon)
+            max_lon = max(max_lon, wpt.lon)
+            min_lat = min(min_lat, wpt.lat)
+            max_lat = max(max_lat, wpt.lat)
+            if wpt.ele is not None:
+                min_ele = min(min_ele, wpt.ele)
+                max_ele = max(max_ele, wpt.ele)
+
+        for rte_or_trk in self.rtes + self.trks:
+            rte_or_trk_bounds = rte_or_trk._geojson_bounds
+            if len(rte_or_trk_bounds) == 4:  # (minlon, minlat, maxlon, maxlat)
+                (
+                    rte_or_trk_min_lon,
+                    rte_or_trk_min_lat,
+                    rte_or_trk_max_lon,
+                    rte_or_trk_max_lat,
+                ) = rte_or_trk_bounds  # type: ignore
+                min_lon = min(min_lon, rte_or_trk_min_lon)
+                max_lon = max(max_lon, rte_or_trk_max_lon)
+                min_lat = min(min_lat, rte_or_trk_min_lat)
+                max_lat = max(max_lat, rte_or_trk_max_lat)
+            elif (
+                len(rte_or_trk_bounds) == 6
+            ):  # (minlon, minlat, minele, maxlon, maxlat, maxele)
+                (
+                    rte_or_trk_min_lon,
+                    rte_or_trk_min_lat,
+                    rte_or_trk_min_ele,
+                    rte_or_trk_max_lon,
+                    rte_or_trk_max_lat,
+                    rte_or_trk_max_ele,
+                ) = rte_or_trk_bounds  # type: ignore
+                min_lon = min(min_lon, rte_or_trk_min_lon)
+                max_lon = max(max_lon, rte_or_trk_max_lon)
+                min_lat = min(min_lat, rte_or_trk_min_lat)
+                max_lat = max(max_lat, rte_or_trk_max_lat)
+                min_ele = min(min_ele, rte_or_trk_min_ele)
+                max_ele = max(max_ele, rte_or_trk_max_ele)
+
+        if min_ele == Decimal("Infinity") and max_ele == Decimal("-Infinity"):
+            return (min_lon, min_lat, max_lon, max_lat)
+
+        return (min_lon, min_lat, min_ele, max_lon, max_lat, max_ele)
+
     def to_geojson(
         self,
         type: Literal["GeometryCollection", "FeatureCollection"] = "FeatureCollection",
@@ -347,6 +409,7 @@ class GPX(Element):
             # construct the `GeometryCollection` object
             geometry_collection_geojson = {
                 "type": "GeometryCollection",
+                "bbox": self._geojson_bounds,
                 "geometries": geometries,
             }
 
@@ -360,6 +423,7 @@ class GPX(Element):
         # construct the `FeatureCollection` object
         feature_collection_geojson = {
             "type": "FeatureCollection",
+            "bbox": self._geojson_bounds,
             "features": features,
         }
 
