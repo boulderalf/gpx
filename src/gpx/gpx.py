@@ -50,13 +50,16 @@ class GPX(Element):
         self.metadata: Metadata | None = None
 
         #: A list of waypoints.
-        self.waypoints: list[Waypoint] = []
+        self.wpts: list[Waypoint] = []
+        self.waypoints = self.wpts  #: Alias of :attr:`wpts`.
 
         #: A list of routes.
-        self.routes: list[Route] = []
+        self.rtes: list[Route] = []
+        self.routes = self.rtes  #: Alias of :attr:`rtes`.
 
         #: A list of tracks.
-        self.tracks: list[Track] = []
+        self.trks: list[Track] = []
+        self.tracks = self.trks  #: Alias of :attr:`trks`.
 
         if self._element is not None:
             self._parse()
@@ -213,15 +216,15 @@ class GPX(Element):
 
         # waypoints
         for wpt in self._element.iterfind("wpt", namespaces=self._nsmap):
-            self.waypoints.append(Waypoint(wpt))
+            self.wpts.append(Waypoint(wpt))
 
         # routes
         for rte in self._element.iterfind("rte", namespaces=self._nsmap):
-            self.routes.append(Route(rte))
+            self.rtes.append(Route(rte))
 
         # tracks
         for trk in self._element.iterfind("trk", namespaces=self._nsmap):
-            self.tracks.append(Track(trk))
+            self.trks.append(Track(trk))
 
     def _build(self, tag: str = "gpx") -> etree._Element:
         gpx = super()._build(tag)
@@ -235,16 +238,16 @@ class GPX(Element):
             gpx.append(self.metadata._build())
 
         # waypoints
-        for _waypoint in self.waypoints:
-            gpx.append(_waypoint._build())
+        for wpt in self.wpts:
+            gpx.append(wpt._build())
 
         # routes
-        for _route in self.routes:
-            gpx.append(_route._build())
+        for rte in self.rtes:
+            gpx.append(rte._build())
 
         # tracks
-        for _track in self.tracks:
-            gpx.append(_track._build())
+        for trk in self.trks:
+            gpx.append(trk._build())
 
         return gpx
 
@@ -338,7 +341,7 @@ class GPX(Element):
             # construct geometries
             geometries = [
                 gpx_obj.__geo_interface__
-                for gpx_obj in self.waypoints + self.routes + self.tracks
+                for gpx_obj in self.wpts + self.rtes + self.trks
             ]
 
             # construct the `GeometryCollection` object
@@ -351,8 +354,7 @@ class GPX(Element):
 
         # construct features
         features = [
-            gpx_obj.to_geojson()
-            for gpx_obj in self.waypoints + self.routes + self.tracks
+            gpx_obj.to_geojson() for gpx_obj in self.wpts + self.rtes + self.trks
         ]
 
         # construct the `FeatureCollection` object
