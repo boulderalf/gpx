@@ -126,6 +126,62 @@ class Route(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
 
         return route
 
+    @classmethod
+    def from_geojson(cls, geojson: dict[str, Any]) -> Route:  # noqa: C901
+        rte = cls()
+
+        if geojson["type"] == "LineString":
+            for coordinates in geojson["coordinates"]:
+                rte.rtepts.append(Waypoint._geojson_from_coordinates(*coordinates))
+            return rte
+        elif (
+            geojson["type"] == "Feature" and geojson["geometry"]["type"] == "LineString"
+        ):
+            if "coordinatesProperties" in geojson["properties"]:
+                for coordinates, properties in zip(
+                    geojson["geometry"]["coordinates"],
+                    geojson["properties"]["coordinatesProperties"],
+                ):
+                    # create the route point and set the coordinates
+                    rtept = Waypoint._geojson_from_coordinates(*coordinates)
+
+                    # set the properties
+                    rtept._geojson_parse_properties(properties)
+
+                    # add the route point to the route
+                    rte.rtepts.append(rtept)
+            else:
+                for coordinates in geojson["geometry"]["coordinates"]:
+                    rte.rtepts.append(Waypoint._geojson_from_coordinates(*coordinates))
+
+            # set the properties
+            if (name := geojson["properties"].get("name")) is not None:
+                rte.name = name
+
+            if (cmt := geojson["properties"].get("cmt")) is not None:
+                rte.cmt = cmt
+
+            if (desc := geojson["properties"].get("desc")) is not None:
+                rte.desc = desc
+
+            if (src := geojson["properties"].get("src")) is not None:
+                rte.src = src
+
+            for link in geojson["properties"].get("links", []):
+                rte.links.append(Link.from_dict(link))
+
+            if (number := geojson["properties"].get("number")) is not None:
+                rte.number = number
+
+            if (type := geojson["properties"].get("type")) is not None:
+                rte.type = type
+
+            return rte
+        else:
+            raise ValueError(
+                f"Unsupported GeoJSON object type: {geojson['geometry']['type'] if geojson['type'] == 'Feature' else geojson['type']}. Should be either a `LineString` or a `Feature` object."
+            )
+
     def to_geojson(
         self, type: Literal["LineString", "Feature"] = "Feature"
     ) -> dict[str, Any]:

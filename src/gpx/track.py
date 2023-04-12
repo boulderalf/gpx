@@ -17,6 +17,7 @@ from .link import Link
 from .track_segment import TrackSegment
 from .types import Latitude, Longitude
 from .utils import CustomJSONEncoder, filter_geojson_properties
+from .waypoint import Waypoint
 
 
 class Track(Element):
@@ -176,6 +177,82 @@ class Track(Element):
             return min_lon, min_lat, min_ele, max_lon, max_lat, max_ele
 
         return min_lon, min_lat, max_lon, max_lat
+
+    @classmethod
+    def from_geojson(cls, geojson: dict[str, Any]) -> Track:  # noqa: C901
+        trk = cls()
+
+        if geojson["type"] == "MultiLineString":
+            for segment_coordinates in geojson["coordinates"]:
+                trkseg = TrackSegment()
+                for coordinates in segment_coordinates:
+                    trkseg.trkpts.append(
+                        Waypoint._geojson_from_coordinates(*coordinates)
+                    )
+                trk.trksegs.append(trkseg)
+            return trk
+        elif (
+            geojson["type"] == "Feature"
+            and geojson["geometry"]["type"] == "MultiLineString"
+        ):
+            if "coordinatesProperties" in geojson["properties"]:
+                for segment_coordinates, segment_properties in zip(
+                    geojson["geometry"]["coordinates"],
+                    geojson["properties"]["coordinatesProperties"],
+                ):
+                    trkseg = TrackSegment()
+
+                    for coordinates, properties in zip(
+                        segment_coordinates, segment_properties
+                    ):
+                        # create the track point and set the coordinates
+                        trkpt = Waypoint._geojson_from_coordinates(*coordinates)
+
+                        # set the properties
+                        trkpt._geojson_parse_properties(properties)
+
+                        # add the route point to the route
+                        trkseg.trkpts.append(trkpt)
+
+                    trk.trksegs.append(trkseg)
+            else:
+                for segment_coordinates in geojson["geometry"]["coordinates"]:
+                    trkseg = TrackSegment()
+
+                    for coordinates in segment_coordinates:
+                        trkseg.trkpts.append(
+                            Waypoint._geojson_from_coordinates(*coordinates)
+                        )
+
+                    trk.trksegs.append(trkseg)
+
+            # set the properties
+            if (name := geojson["properties"].get("name")) is not None:
+                trk.name = name
+
+            if (cmt := geojson["properties"].get("cmt")) is not None:
+                trk.cmt = cmt
+
+            if (desc := geojson["properties"].get("desc")) is not None:
+                trk.desc = desc
+
+            if (src := geojson["properties"].get("src")) is not None:
+                trk.src = src
+
+            for link in geojson["properties"].get("links", []):
+                trk.links.append(Link.from_dict(link))
+
+            if (number := geojson["properties"].get("number")) is not None:
+                trk.number = number
+
+            if (type := geojson["properties"].get("type")) is not None:
+                trk.type = type
+
+            return trk
+        else:
+            raise ValueError(
+                f"Unsupported GeoJSON object type: {geojson['geometry']['type'] if geojson['type'] == 'Feature' else geojson['type']}. Should be either a `MultiLineString` or a `Feature` object."
+            )
 
     def to_geojson(
         self, type: Literal["MultiLineString", "Feature"] = "Feature"

@@ -57,6 +57,42 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
 
         return track_segment
 
+    @classmethod
+    def from_geojson(cls, geojson: dict[str, Any]) -> TrackSegment:
+        trkseg = cls()
+
+        if geojson["type"] == "LineString":
+            for coordinates in geojson["coordinates"]:
+                trkseg.trkpts.append(Waypoint._geojson_from_coordinates(*coordinates))
+            return trkseg
+        elif (
+            geojson["type"] == "Feature" and geojson["geometry"]["type"] == "LineString"
+        ):
+            if "coordinatesProperties" in geojson["properties"]:
+                for coordinates, properties in zip(
+                    geojson["geometry"]["coordinates"],
+                    geojson["properties"]["coordinatesProperties"],
+                ):
+                    # create the track segment point and set the coordinates
+                    trkpt = Waypoint._geojson_from_coordinates(*coordinates)
+
+                    # set the properties
+                    trkpt._geojson_parse_properties(properties)
+
+                    # add the track point to the track segment
+                    trkseg.trkpts.append(trkpt)
+            else:
+                for coordinates in geojson["geometry"]["coordinates"]:
+                    trkseg.trkpts.append(
+                        Waypoint._geojson_from_coordinates(*coordinates)
+                    )
+
+            return trkseg
+        else:
+            raise ValueError(
+                f"Unsupported GeoJSON object type: {geojson['geometry']['type'] if geojson['type'] == 'Feature' else geojson['type']}. Should be either a `LineString` or a `Feature` object."
+            )
+
     def to_geojson(
         self, type: Literal["LineString", "Feature"] = "Feature"
     ) -> dict[str, Any]:

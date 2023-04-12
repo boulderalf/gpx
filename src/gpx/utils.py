@@ -40,7 +40,7 @@ class CustomJSONEncoder(JSONEncoder):
 
     def default(self, obj: Any) -> Any:
         """Convert `obj` to a JSON serializable type. Overrides the default
-        `JSONEncoder` of `Flask`.
+        `JSONEncoder`.
         """
         if isinstance(obj, datetime):
             return format_datetime(obj)

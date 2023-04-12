@@ -65,6 +65,22 @@ class Link(Element):
 
         return link
 
+    @classmethod
+    def from_dict(cls, data: dict[str, str]) -> Link:
+        """Creates a link from a dictionary.
+
+        Args:
+            data: The dictionary containing the link data.
+
+        Returns:
+            A link object.
+        """
+        link = cls()
+        link.href = data["href"]
+        link.text = data.get("text")
+        link.type = data.get("type")
+        return link
+
     def to_dict(self) -> dict[str, str]:
         """Converts the link to a dictionary."""
         return {

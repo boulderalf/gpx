@@ -300,6 +300,95 @@ class Waypoint(Element):
 
         return properties
 
+    @classmethod
+    def _geojson_from_coordinates(
+        cls, lon: float, lat: float, ele: float | None = None
+    ) -> Waypoint:
+        """Create a waypoint from the given coordinates.
+
+        Args:
+            lon: The longitude of the waypoint.
+            lat: The latitude of the waypoint.
+            ele: The elevation of the waypoint.
+        """
+        wpt = cls()
+        wpt.lon = Longitude(lon)
+        wpt.lat = Latitude(lat)
+        if ele is not None:
+            wpt.ele = Decimal(ele)
+        return wpt
+
+    def _geojson_parse_properties(  # noqa: C901
+        self, properties: dict[str, Any]
+    ) -> None:
+        if (time := properties.get("time")) is not None:
+            self.time = isoparse(time)
+
+        if (magvar := properties.get("magvar")) is not None:
+            self.magvar = Degrees(magvar)
+
+        if (geoidheight := properties.get("geoidheight")) is not None:
+            self.geoidheight = Decimal(geoidheight)
+
+        if (name := properties.get("name")) is not None:
+            self.name = name
+
+        if (cmt := properties.get("cmt")) is not None:
+            self.cmt = cmt
+
+        if (desc := properties.get("desc")) is not None:
+            self.desc = desc
+
+        if (src := properties.get("src")) is not None:
+            self.src = src
+
+        for link in properties.get("links", []):
+            self.links.append(Link.from_dict(link))
+
+        if (sym := properties.get("sym")) is not None:
+            self.sym = sym
+
+        if (type := properties.get("type")) is not None:
+            self.type = type
+
+        if (fix := properties.get("fix")) is not None:
+            self.fix = Fix(fix)
+
+        if (sat := properties.get("sat")) is not None:
+            self.sat = int(sat)
+
+        if (hdop := properties.get("hdop")) is not None:
+            self.hdop = Decimal(hdop)
+
+        if (vdop := properties.get("vdop")) is not None:
+            self.vdop = Decimal(vdop)
+
+        if (pdop := properties.get("pdop")) is not None:
+            self.pdop = Decimal(pdop)
+
+        if (ageofdgpsdata := properties.get("ageofdgpsdata")) is not None:
+            self.ageofdgpsdata = Decimal(ageofdgpsdata)
+
+        if (dgpsid := properties.get("dgpsid")) is not None:
+            self.dgpsid = DGPSStation(dgpsid)
+
+    @classmethod
+    def from_geojson(cls, geojson: dict[str, Any]) -> Waypoint:
+        if geojson["type"] == "Point":
+            return cls._geojson_from_coordinates(*geojson["coordinates"])
+        elif geojson["type"] == "Feature" and geojson["geometry"]["type"] == "Point":
+            # create the waypoint and set the coordinates
+            wpt = cls._geojson_from_coordinates(*geojson["geometry"]["coordinates"])
+
+            # set the properties
+            wpt._geojson_parse_properties(geojson["properties"])
+
+            return wpt
+        else:
+            raise ValueError(
+                f"Unsupported GeoJSON object type: {geojson['geometry']['type'] if geojson['type'] == 'Feature' else geojson['type']}. Should be either a `Point` or a `Feature` object."
+            )
+
     def to_geojson(
         self, type: Literal["Point", "Feature"] = "Feature"
     ) -> dict[str, Any]:

@@ -280,7 +280,7 @@ class GPX(Element):
 
     @classmethod
     def from_string(cls, gpx_str: str, validate: bool = False) -> GPX:
-        """Create an GPX instance from a string.
+        """Create a GPX instance from a string.
 
             >>> from gpx import GPX
             >>> gpx = GPX.from_str(\"\"\"<?xml version="1.0" encoding="UTF-8" ?>
@@ -306,7 +306,7 @@ class GPX(Element):
 
     @classmethod
     def from_file(cls, gpx_file: str | Path, validate: bool = False) -> GPX:
-        """Create an GPX instance from a file.
+        """Create a GPX instance from a file.
 
             >>> from gpx import GPX
             >>> gpx = GPX.from_file("path/to/file.gpx")
@@ -408,6 +408,59 @@ class GPX(Element):
             return (min_lon, min_lat, max_lon, max_lat)
 
         return (min_lon, min_lat, min_ele, max_lon, max_lat, max_ele)
+
+    @classmethod
+    def from_geojson(cls, geojson_file: str | Path) -> GPX:  # noqa: C901
+        """Create a GPX instance from a GeoJSON file.
+
+        Args:
+            geojson_file: The file containing the GeoJSON data.
+
+        Returns:
+            The GPX instance.
+
+        Raises:
+            ValueError: If the file is not a valid GeoJSON file.
+        """
+        with open(geojson_file, encoding="utf-8") as fh:
+            geojson = json.load(fh, parse_float=Decimal)
+
+        # create a new GPX object
+        gpx = cls()
+
+        if isinstance(geojson, dict) and "type" in geojson:
+            if geojson["type"] == "GeometryCollection":
+                for geometry in geojson["geometries"]:
+                    if geometry["type"] == "Point":
+                        gpx.wpts.append(Waypoint.from_geojson(geometry))
+                    elif geometry["type"] == "LineString":
+                        gpx.rtes.append(Route.from_geojson(geometry))
+                    elif geometry["type"] == "MultiLineString":
+                        gpx.trks.append(Track.from_geojson(geometry))
+                else:
+                    raise ValueError(f"Unsupported geometry type: {geometry['type']}")
+            elif geojson["type"] == "FeatureCollection":
+                for feature in geojson["features"]:
+                    if feature["geometry"]["type"] == "Point":
+                        gpx.wpts.append(Waypoint.from_geojson(feature))
+                    elif feature["geometry"]["type"] == "LineString":
+                        gpx.rtes.append(Route.from_geojson(feature))
+                    elif feature["geometry"]["type"] == "MultiLineString":
+                        gpx.trks.append(Track.from_geojson(feature))
+                    else:
+                        raise ValueError(
+                            f"Unsupported geometry type: {feature['geometry']['type']}"
+                        )
+            else:
+                raise ValueError(
+                    "Not a valid GeoJSON file. Should be a either a `GeometryCollection` or a `FeatureCollection` object."
+                )
+        else:
+            raise ValueError(
+                "Not a valid GeoJSON file. Should be a either a `GeometryCollection` or a `FeatureCollection` object."
+            )
+
+        return gpx
 
     def to_geojson(
         self,
