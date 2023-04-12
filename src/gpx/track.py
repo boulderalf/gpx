@@ -311,10 +311,8 @@ class Track(Element):
         feature_geojson = {
             "type": "Feature",
             "geometry": multilinestring_geojson,
+            "properties": properties if properties else None,
         }
-
-        if properties:
-            feature_geojson["properties"] = properties
 
         return feature_geojson
 

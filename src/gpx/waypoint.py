@@ -423,10 +423,8 @@ class Waypoint(Element):
         feature_geojson = {
             "type": "Feature",
             "geometry": point_geojson,
+            "properties": properties if properties else None,
         }
-
-        if properties:
-            feature_geojson["properties"] = properties
 
         return feature_geojson
 
