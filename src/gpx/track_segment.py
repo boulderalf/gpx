@@ -5,12 +5,14 @@ points describing a path.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
 from lxml import etree
 
 from .element import Element
+from .errors import InvalidGeoJSONError, UnsupportedGeoJSONTypeError
 from .mixins import PointsMutableSequenceMixin, PointsStatisticsMixin
 from .utils import CustomJSONEncoder
 from .waypoint import Waypoint
@@ -59,39 +61,79 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
 
     @classmethod
     def from_geojson(cls, geojson: dict[str, Any]) -> TrackSegment:
+        """Create a track segment from a `GeoJSON <https://geojson.org/>`_ object.
+
+        Args:
+            geojson: The GeoJSON object.
+
+        Returns:
+            The track segment.
+
+        Raises:
+            InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
+            UnsupportedGeoJSONTypeError: If the GeoJSON object type is unsupported.
+        """
+        # create a new TrackSegment object
         trkseg = cls()
 
-        if geojson["type"] == "LineString":
-            for coordinates in geojson["coordinates"]:
-                trkseg.trkpts.append(Waypoint._geojson_from_coordinates(*coordinates))
-            return trkseg
-        elif (
-            geojson["type"] == "Feature" and geojson["geometry"]["type"] == "LineString"
-        ):
-            if "coordinatesProperties" in geojson["properties"]:
-                for coordinates, properties in zip(
-                    geojson["geometry"]["coordinates"],
-                    geojson["properties"]["coordinatesProperties"],
-                ):
-                    # create the track segment point and set the coordinates
-                    trkpt = Waypoint._geojson_from_coordinates(*coordinates)
-
-                    # set the properties
-                    trkpt._geojson_parse_properties(properties)
-
-                    # add the track point to the track segment
-                    trkseg.trkpts.append(trkpt)
-            else:
-                for coordinates in geojson["geometry"]["coordinates"]:
+        if isinstance(geojson, dict) and "type" in geojson:
+            if geojson["type"] == "LineString":
+                for coordinates in geojson["coordinates"]:
                     trkseg.trkpts.append(
                         Waypoint._geojson_from_coordinates(*coordinates)
                     )
+                return trkseg
+            elif (
+                geojson["type"] == "Feature"
+                and geojson["geometry"]["type"] == "LineString"
+            ):
+                if "coordinatesProperties" in geojson["properties"]:
+                    for coordinates, properties in zip(
+                        geojson["geometry"]["coordinates"],
+                        geojson["properties"]["coordinatesProperties"],
+                    ):
+                        # create the track segment point and set the coordinates
+                        trkpt = Waypoint._geojson_from_coordinates(*coordinates)
 
-            return trkseg
+                        # set the properties
+                        trkpt._geojson_parse_properties(properties)
+
+                        # add the track point to the track segment
+                        trkseg.trkpts.append(trkpt)
+                else:
+                    for coordinates in geojson["geometry"]["coordinates"]:
+                        trkseg.trkpts.append(
+                            Waypoint._geojson_from_coordinates(*coordinates)
+                        )
+
+                return trkseg
+            else:
+                raise UnsupportedGeoJSONTypeError(
+                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `LineString` or a `Feature` object."
+                )
         else:
-            raise ValueError(
-                f"Unsupported GeoJSON object type: {geojson['geometry']['type'] if geojson['type'] == 'Feature' else geojson['type']}. Should be either a `LineString` or a `Feature` object."
+            raise InvalidGeoJSONError(
+                "The GeoJSON object is invalid. Should be a either a `LineString` or a `Feature` object."
             )
+
+    @classmethod
+    def from_geojson_file(cls, geojson_file: str | Path) -> TrackSegment:
+        """Create a track segment from a `GeoJSON <https://geojson.org/>`_ file.
+
+        Args:
+            geojson_file: The file containing the GeoJSON data.
+
+        Returns:
+            The track segment.
+
+        Raises:
+            InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
+            UnsupportedGeoJSONTypeError: If the GeoJSON object type is unsupported.
+        """
+        with open(geojson_file, encoding="utf-8") as fh:
+            geojson = json.load(fh, parse_float=Decimal)
+
+        return cls.from_geojson(geojson)
 
     def to_geojson(
         self, type: Literal["LineString", "Feature"] = "Feature"
@@ -139,17 +181,6 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
 
         return feature_geojson
 
-    @property
-    def __geo_interface__(self) -> dict[str, Any]:
-        """Represents the track segment as a GeoJSON-like `LineString` object.
-
-        Implements the `__geo_interface__` protocol -- a GeoJSON-like
-        protocol for geo-spatial (GIS) vector data. See the
-        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
-        for more details.
-        """
-        return self.to_geojson(type="LineString")
-
     def to_geojson_file(
         self,
         geojson_file: str | Path,
@@ -167,3 +198,14 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
         """
         with open(geojson_file, "w", encoding="utf-8") as fh:
             json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
+
+    @property
+    def __geo_interface__(self) -> dict[str, Any]:
+        """Represents the track segment as a GeoJSON-like `LineString` object.
+
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like
+        protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
+        """
+        return self.to_geojson(type="LineString")

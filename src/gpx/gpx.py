@@ -16,7 +16,7 @@ from . import gpx_schema
 from .bounds import Bounds
 from .copyright import Copyright
 from .element import Element
-from .errors import InvalidGPXError
+from .errors import InvalidGeoJSONError, InvalidGPXError, UnsupportedGeoJSONTypeError
 from .link import Link
 from .metadata import Metadata
 from .person import Person
@@ -304,6 +304,16 @@ class GPX(Element):
                 raise InvalidGPXError("The GPX data is invalid.")
         return cls(gpx)
 
+    def to_string(self) -> str:
+        """Serialize the GPX instance to a string.
+
+        Returns:
+            The GPX data as a string.
+        """
+        gpx = self._build()
+        gpx_tree = etree.ElementTree(gpx)
+        return etree.tostring(gpx_tree, encoding="unicode", pretty_print=True)
+
     @classmethod
     def from_file(cls, gpx_file: str | Path, validate: bool = False) -> GPX:
         """Create a GPX instance from a file.
@@ -326,16 +336,6 @@ class GPX(Element):
                 raise InvalidGPXError("The GPX data is invalid.")
         return cls(gpx)
 
-    def to_string(self) -> str:
-        """Serialize the GPX instance to a string.
-
-        Returns:
-            The GPX data as a string.
-        """
-        gpx = self._build()
-        gpx_tree = etree.ElementTree(gpx)
-        return etree.tostring(gpx_tree, encoding="unicode", pretty_print=True)
-
     def to_file(self, gpx_file: str | Path) -> None:
         """Serialize the GPX instance to a file.
 
@@ -355,7 +355,7 @@ class GPX(Element):
         tuple[Decimal, Decimal, Decimal, Decimal]
         | tuple[Decimal, Decimal, Decimal, Decimal, Decimal, Decimal]
     ):
-        """The GeoJSON-compatible bounds.
+        """The `GeoJSON <https://geojson.org/>`_-compatible bounds.
 
         The bounds are of the form (minlon, minlat, minele (alt), maxlon,
         maxlat, maxele (alt)], where ele is optional.
@@ -410,21 +410,19 @@ class GPX(Element):
         return (min_lon, min_lat, min_ele, max_lon, max_lat, max_ele)
 
     @classmethod
-    def from_geojson(cls, geojson_file: str | Path) -> GPX:  # noqa: C901
-        """Create a GPX instance from a GeoJSON file.
+    def from_geojson(cls, geojson: dict[str, Any]) -> GPX:  # noqa: C901
+        """Create a GPX instance from a `GeoJSON <https://geojson.org/>`_ object.
 
         Args:
-            geojson_file: The file containing the GeoJSON data.
+            geojson: The GeoJSON object.
 
         Returns:
             The GPX instance.
 
         Raises:
-            ValueError: If the file is not a valid GeoJSON file.
+            InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
+            UnsupportedGeoJSONTypeError: If the GeoJSON object type is unsupported.
         """
-        with open(geojson_file, encoding="utf-8") as fh:
-            geojson = json.load(fh, parse_float=Decimal)
-
         # create a new GPX object
         gpx = cls()
 
@@ -452,15 +450,34 @@ class GPX(Element):
                             f"Unsupported geometry type: {feature['geometry']['type']}"
                         )
             else:
-                raise ValueError(
-                    "Not a valid GeoJSON file. Should be a either a `GeometryCollection` or a `FeatureCollection` object."
+                raise UnsupportedGeoJSONTypeError(
+                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `GeometryCollection` or a `FeatureCollection` object."
                 )
         else:
-            raise ValueError(
-                "Not a valid GeoJSON file. Should be a either a `GeometryCollection` or a `FeatureCollection` object."
+            raise InvalidGeoJSONError(
+                "The GeoJSON object is invalid. Should be a either a `GeometryCollection` or a `FeatureCollection` object."
             )
 
         return gpx
+
+    @classmethod
+    def from_geojson_file(cls, geojson_file: str | Path) -> GPX:
+        """Create a GPX instance from a `GeoJSON <https://geojson.org/>`_ file.
+
+        Args:
+            geojson_file: The file containing the GeoJSON data.
+
+        Returns:
+            The GPX instance.
+
+        Raises:
+            InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
+            UnsupportedGeoJSONTypeError: If the GeoJSON object type is unsupported.
+        """
+        with open(geojson_file, encoding="utf-8") as fh:
+            geojson = json.load(fh, parse_float=Decimal)
+
+        return cls.from_geojson(geojson)
 
     def to_geojson(
         self,
@@ -508,18 +525,6 @@ class GPX(Element):
 
         return feature_collection_geojson
 
-    @property
-    def __geo_interface__(self) -> dict[str, Any]:
-        """Represents the GPX instance as a GeoJSON-like `GeometryCollection`
-        object.
-
-        Implements the `__geo_interface__` protocol -- a GeoJSON-like
-        protocol for geo-spatial (GIS) vector data. See the
-        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
-        for more details.
-        """
-        return self.to_geojson(type="GeometryCollection")
-
     def to_geojson_file(
         self,
         geojson_file: str | Path,
@@ -537,3 +542,15 @@ class GPX(Element):
         """
         with open(geojson_file, "w", encoding="utf-8") as fh:
             json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
+
+    @property
+    def __geo_interface__(self) -> dict[str, Any]:
+        """Represents the GPX instance as a GeoJSON-like `GeometryCollection`
+        object.
+
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like
+        protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
+        """
+        return self.to_geojson(type="GeometryCollection")

@@ -12,6 +12,7 @@ from dateutil.parser import isoparse
 from lxml import etree
 
 from .element import Element
+from .errors import InvalidGeoJSONError, UnsupportedGeoJSONTypeError
 from .link import Link
 from .types import Degrees, DGPSStation, Fix, Latitude, Longitude
 from .utils import CustomJSONEncoder, filter_geojson_properties, format_datetime
@@ -374,20 +375,58 @@ class Waypoint(Element):
 
     @classmethod
     def from_geojson(cls, geojson: dict[str, Any]) -> Waypoint:
-        if geojson["type"] == "Point":
-            return cls._geojson_from_coordinates(*geojson["coordinates"])
-        elif geojson["type"] == "Feature" and geojson["geometry"]["type"] == "Point":
-            # create the waypoint and set the coordinates
-            wpt = cls._geojson_from_coordinates(*geojson["geometry"]["coordinates"])
+        """Create a waypoint from a `GeoJSON <https://geojson.org/>`_ object.
 
-            # set the properties
-            wpt._geojson_parse_properties(geojson["properties"])
+        Args:
+            geojson: The GeoJSON object.
 
-            return wpt
+        Returns:
+            The waypoint.
+
+        Raises:
+            InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
+            UnsupportedGeoJSONTypeError: If the GeoJSON object type is unsupported.
+        """
+        if isinstance(geojson, dict) and "type" in geojson:
+            if geojson["type"] == "Point":
+                return cls._geojson_from_coordinates(*geojson["coordinates"])
+            elif (
+                geojson["type"] == "Feature" and geojson["geometry"]["type"] == "Point"
+            ):
+                # create the waypoint and set the coordinates
+                wpt = cls._geojson_from_coordinates(*geojson["geometry"]["coordinates"])
+
+                # set the properties
+                wpt._geojson_parse_properties(geojson["properties"])
+
+                return wpt
+            else:
+                raise UnsupportedGeoJSONTypeError(
+                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `Point` or a `Feature` object."
+                )
         else:
-            raise ValueError(
-                f"Unsupported GeoJSON object type: {geojson['geometry']['type'] if geojson['type'] == 'Feature' else geojson['type']}. Should be either a `Point` or a `Feature` object."
+            raise InvalidGeoJSONError(
+                "The GeoJSON object is invalid. Should be a either a `Point` or a `Feature` object."
             )
+
+    @classmethod
+    def from_geojson_file(cls, geojson_file: str | Path) -> Waypoint:
+        """Create a waypoint from a `GeoJSON <https://geojson.org/>`_ file.
+
+        Args:
+            geojson_file: The file containing the GeoJSON data.
+
+        Returns:
+            The waypoint.
+
+        Raises:
+            InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
+            UnsupportedGeoJSONTypeError: If the GeoJSON object type is unsupported.
+        """
+        with open(geojson_file, encoding="utf-8") as fh:
+            geojson = json.load(fh, parse_float=Decimal)
+
+        return cls.from_geojson(geojson)
 
     def to_geojson(
         self, type: Literal["Point", "Feature"] = "Feature"
@@ -428,17 +467,6 @@ class Waypoint(Element):
 
         return feature_geojson
 
-    @property
-    def __geo_interface__(self) -> dict[str, Any]:
-        """Represents the waypoint as a GeoJSON-like `Point` object.
-
-        Implements the `__geo_interface__` protocol -- a GeoJSON-like
-        protocol for geo-spatial (GIS) vector data. See the
-        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
-        for more details.
-        """
-        return self.to_geojson(type="Point")
-
     def to_geojson_file(
         self, geojson_file: str | Path, type: Literal["Point", "Feature"] = "Feature"
     ) -> None:
@@ -454,6 +482,17 @@ class Waypoint(Element):
         """
         with open(geojson_file, "w", encoding="utf-8") as fh:
             json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
+
+    @property
+    def __geo_interface__(self) -> dict[str, Any]:
+        """Represents the waypoint as a GeoJSON-like `Point` object.
+
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like
+        protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
+        """
+        return self.to_geojson(type="Point")
 
     def distance_to(self, other: Waypoint, radius: int = 6_378_137) -> float:
         """Returns the distance to the other waypoint (in metres) using a simple

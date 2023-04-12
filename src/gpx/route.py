@@ -5,12 +5,14 @@ waypoints representing a series of turn points leading to a destination.
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
 from lxml import etree
 
 from .element import Element
+from .errors import InvalidGeoJSONError, UnsupportedGeoJSONTypeError
 from .link import Link
 from .mixins import PointsMutableSequenceMixin, PointsStatisticsMixin
 from .utils import CustomJSONEncoder, filter_geojson_properties
@@ -128,59 +130,99 @@ class Route(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
 
     @classmethod
     def from_geojson(cls, geojson: dict[str, Any]) -> Route:  # noqa: C901
+        """Create a route from a `GeoJSON <https://geojson.org/>`_ object.
+
+        Args:
+            geojson: The GeoJSON object.
+
+        Returns:
+            The route.
+
+        Raises:
+            InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
+            UnsupportedGeoJSONTypeError: If the GeoJSON object type is unsupported.
+        """
+        # create a new Route object
         rte = cls()
 
-        if geojson["type"] == "LineString":
-            for coordinates in geojson["coordinates"]:
-                rte.rtepts.append(Waypoint._geojson_from_coordinates(*coordinates))
-            return rte
-        elif (
-            geojson["type"] == "Feature" and geojson["geometry"]["type"] == "LineString"
-        ):
-            if "coordinatesProperties" in geojson["properties"]:
-                for coordinates, properties in zip(
-                    geojson["geometry"]["coordinates"],
-                    geojson["properties"]["coordinatesProperties"],
-                ):
-                    # create the route point and set the coordinates
-                    rtept = Waypoint._geojson_from_coordinates(*coordinates)
-
-                    # set the properties
-                    rtept._geojson_parse_properties(properties)
-
-                    # add the route point to the route
-                    rte.rtepts.append(rtept)
-            else:
-                for coordinates in geojson["geometry"]["coordinates"]:
+        if isinstance(geojson, dict) and "type" in geojson:
+            if geojson["type"] == "LineString":
+                for coordinates in geojson["coordinates"]:
                     rte.rtepts.append(Waypoint._geojson_from_coordinates(*coordinates))
+                return rte
+            elif (
+                geojson["type"] == "Feature"
+                and geojson["geometry"]["type"] == "LineString"
+            ):
+                if "coordinatesProperties" in geojson["properties"]:
+                    for coordinates, properties in zip(
+                        geojson["geometry"]["coordinates"],
+                        geojson["properties"]["coordinatesProperties"],
+                    ):
+                        # create the route point and set the coordinates
+                        rtept = Waypoint._geojson_from_coordinates(*coordinates)
 
-            # set the properties
-            if (name := geojson["properties"].get("name")) is not None:
-                rte.name = name
+                        # set the properties
+                        rtept._geojson_parse_properties(properties)
 
-            if (cmt := geojson["properties"].get("cmt")) is not None:
-                rte.cmt = cmt
+                        # add the route point to the route
+                        rte.rtepts.append(rtept)
+                else:
+                    for coordinates in geojson["geometry"]["coordinates"]:
+                        rte.rtepts.append(
+                            Waypoint._geojson_from_coordinates(*coordinates)
+                        )
 
-            if (desc := geojson["properties"].get("desc")) is not None:
-                rte.desc = desc
+                # set the properties
+                if (name := geojson["properties"].get("name")) is not None:
+                    rte.name = name
 
-            if (src := geojson["properties"].get("src")) is not None:
-                rte.src = src
+                if (cmt := geojson["properties"].get("cmt")) is not None:
+                    rte.cmt = cmt
 
-            for link in geojson["properties"].get("links", []):
-                rte.links.append(Link.from_dict(link))
+                if (desc := geojson["properties"].get("desc")) is not None:
+                    rte.desc = desc
 
-            if (number := geojson["properties"].get("number")) is not None:
-                rte.number = number
+                if (src := geojson["properties"].get("src")) is not None:
+                    rte.src = src
 
-            if (type := geojson["properties"].get("type")) is not None:
-                rte.type = type
+                for link in geojson["properties"].get("links", []):
+                    rte.links.append(Link.from_dict(link))
 
-            return rte
+                if (number := geojson["properties"].get("number")) is not None:
+                    rte.number = number
+
+                if (type := geojson["properties"].get("type")) is not None:
+                    rte.type = type
+
+                return rte
+            else:
+                raise UnsupportedGeoJSONTypeError(
+                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `LineString` or a `Feature` object."
+                )
         else:
-            raise ValueError(
-                f"Unsupported GeoJSON object type: {geojson['geometry']['type'] if geojson['type'] == 'Feature' else geojson['type']}. Should be either a `LineString` or a `Feature` object."
+            raise InvalidGeoJSONError(
+                "The GeoJSON object is invalid. Should be a either a `LineString` or a `Feature` object."
             )
+
+    @classmethod
+    def from_geojson_file(cls, geojson_file: str | Path) -> Route:
+        """Create a route from a `GeoJSON <https://geojson.org/>`_ file.
+
+        Args:
+            geojson_file: The file containing the GeoJSON data.
+
+        Returns:
+            The route.
+
+        Raises:
+            InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
+            UnsupportedGeoJSONTypeError: If the GeoJSON object type is unsupported.
+        """
+        with open(geojson_file, encoding="utf-8") as fh:
+            geojson = json.load(fh, parse_float=Decimal)
+
+        return cls.from_geojson(geojson)
 
     def to_geojson(
         self, type: Literal["LineString", "Feature"] = "Feature"
@@ -238,17 +280,6 @@ class Route(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
 
         return feature_geojson
 
-    @property
-    def __geo_interface__(self) -> dict[str, Any]:
-        """Represents the route as a GeoJSON-like `LineString` object.
-
-        Implements the `__geo_interface__` protocol -- a GeoJSON-like
-        protocol for geo-spatial (GIS) vector data. See the
-        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
-        for more details.
-        """
-        return self.to_geojson(type="LineString")
-
     def to_geojson_file(
         self,
         geojson_file: str | Path,
@@ -266,3 +297,14 @@ class Route(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
         """
         with open(geojson_file, "w", encoding="utf-8") as fh:
             json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
+
+    @property
+    def __geo_interface__(self) -> dict[str, Any]:
+        """Represents the route as a GeoJSON-like `LineString` object.
+
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like
+        protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
+        """
+        return self.to_geojson(type="LineString")
