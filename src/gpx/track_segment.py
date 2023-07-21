@@ -7,13 +7,14 @@ from __future__ import annotations
 import json
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal, overload
 
 from lxml import etree
 
 from .element import Element
 from .errors import InvalidGeoJSONError, UnsupportedGeoJSONTypeError
 from .mixins import PointsMutableSequenceMixin, PointsStatisticsMixin
+from .typing import GeoJSONFeature, GeoJSONLineString, SupportsGeoInterface
 from .utils import CustomJSONEncoder
 from .waypoint import Waypoint
 
@@ -60,11 +61,19 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
         return track_segment
 
     @classmethod
-    def from_geojson(cls, geojson: dict[str, Any]) -> TrackSegment:
-        """Create a track segment from a `GeoJSON <https://geojson.org/>`_ object.
+    def from_geojson(
+        cls, context: GeoJSONLineString | GeoJSONFeature | SupportsGeoInterface
+    ) -> TrackSegment:
+        """Create a track segment from a `GeoJSON <https://geojson.org/>`_
+        `LineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.4>`_ object,
+        a `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object or from an
+        object which implements the `__geo_interface__` protocol -- a
+        GeoJSON-like protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
 
         Args:
-            geojson: The GeoJSON object.
+            context: A `GeoJSON <https://geojson.org/>`_ `LineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.4>`_ object, a `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object or an object which implements the `__geo_interface__` protocol.
 
         Returns:
             The track segment.
@@ -75,6 +84,11 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
         """
         # create a new TrackSegment object
         trkseg = cls()
+
+        if isinstance(context, SupportsGeoInterface):
+            geojson = context.__geo_interface__
+        else:
+            geojson = context
 
         if isinstance(geojson, dict) and "type" in geojson:
             if geojson["type"] == "LineString":
@@ -87,7 +101,10 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
                 geojson["type"] == "Feature"
                 and geojson["geometry"]["type"] == "LineString"
             ):
-                if "coordinatesProperties" in geojson["properties"]:
+                if (
+                    "properties" in geojson
+                    and "coordinatesProperties" in geojson["properties"]
+                ):
                     for coordinates, properties in zip(
                         geojson["geometry"]["coordinates"],
                         geojson["properties"]["coordinatesProperties"],
@@ -109,11 +126,11 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
                 return trkseg
             else:
                 raise UnsupportedGeoJSONTypeError(
-                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `LineString` or a `Feature` object."
+                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `LineString` object or a `Feature` object containing a `LineString` geometry."
                 )
         else:
             raise InvalidGeoJSONError(
-                "The GeoJSON object is invalid. Should be a either a `LineString` or a `Feature` object."
+                "The GeoJSON object is invalid. Should be a either a GeoJSON `LineString` object or a GeoJSON `Feature` object containing a `LineString` geometry."
             )
 
     @classmethod
@@ -135,14 +152,22 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
 
         return cls.from_geojson(geojson)
 
+    @overload
+    def to_geojson(self, type: Literal["LineString"]) -> GeoJSONLineString:
+        ...
+
+    @overload
+    def to_geojson(self, type: Literal["Feature"] = ...) -> GeoJSONFeature:
+        ...
+
     def to_geojson(
         self, type: Literal["LineString", "Feature"] = "Feature"
-    ) -> dict[str, Any]:
+    ) -> GeoJSONLineString | GeoJSONFeature:
         """Convert the track segment to a `GeoJSON <https://geojson.org/>`_
         object.
 
-        By default, the track segment is converted to a GeoJSON `Feature` object
-        instead of a `LineString` object. This way, we can add additional
+        By default, the track segment is converted to a GeoJSON `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object
+        instead of a `LineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.4>`_ object. This way, we can add additional
         properties (i.e. metadata) to the GeoJSON object.
 
         Args:
@@ -155,7 +180,7 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
         coordinates = [trkpt._geojson_coordinates for trkpt in self.trkpts]
 
         # construct the `LineString` geometry
-        linestring_geojson = {
+        linestring_geojson: GeoJSONLineString = {
             "type": "LineString",
             "bbox": self._geojson_bounds,
             "coordinates": coordinates,
@@ -172,12 +197,14 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
         if any(coordinates_properties):
             properties["coordinatesProperties"] = coordinates_properties
 
-        # construct the `Feature` object
-        feature_geojson = {
+        # construct the `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object
+        feature_geojson: GeoJSONFeature = {
             "type": "Feature",
             "geometry": linestring_geojson,
-            "properties": properties if properties else None,
         }
+
+        if properties:
+            feature_geojson["properties"] = properties
 
         return feature_geojson
 
@@ -188,8 +215,8 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
     ) -> None:
         """Convert the track segment to a `GeoJSON <https://geojson.org/>`_ file.
 
-        By default, the track segment is converted to a GeoJSON `Feature` object
-        instead of a `LineString` object. This way, we can add additional
+        By default, the track segment is converted to a GeoJSON `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object
+        instead of a `LineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.4>`_ object. This way, we can add additional
         properties (i.e. metadata) to the GeoJSON object.
 
         Args:
@@ -200,12 +227,9 @@ class TrackSegment(Element, PointsMutableSequenceMixin, PointsStatisticsMixin):
             json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
 
     @property
-    def __geo_interface__(self) -> dict[str, Any]:
-        """Represents the track segment as a GeoJSON-like `LineString` object.
+    def __geo_interface__(self) -> GeoJSONLineString:
+        """Represents the track segment as a GeoJSON-like `LineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.4>`_ object.
 
-        Implements the `__geo_interface__` protocol -- a GeoJSON-like
-        protocol for geo-spatial (GIS) vector data. See the
-        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
-        for more details.
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like protocol for geo-spatial (GIS) vector data. See the `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_ for more details.
         """
         return self.to_geojson(type="LineString")

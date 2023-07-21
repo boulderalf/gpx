@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal, overload
 
 from lxml import etree
 
@@ -16,12 +16,22 @@ from . import gpx_schema
 from .bounds import Bounds
 from .copyright import Copyright
 from .element import Element
-from .errors import InvalidGeoJSONError, InvalidGPXError, UnsupportedGeoJSONTypeError
+from .errors import (
+    InvalidGeoJSONError,
+    InvalidGPXError,
+    UnsupportedGeoJSONGeometryTypeError,
+    UnsupportedGeoJSONTypeError,
+)
 from .link import Link
 from .metadata import Metadata
 from .person import Person
 from .route import Route
 from .track import Track
+from .typing import (
+    GeoJSONFeatureCollection,
+    GeoJSONGeometryCollection,
+    SupportsGeoInterface,
+)
 from .utils import (
     CustomJSONEncoder,
     remove_encoding_from_string,
@@ -410,11 +420,22 @@ class GPX(Element):
         return (min_lon, min_lat, min_ele, max_lon, max_lat, max_ele)
 
     @classmethod
-    def from_geojson(cls, geojson: dict[str, Any]) -> GPX:  # noqa: C901
-        """Create a GPX instance from a `GeoJSON <https://geojson.org/>`_ object.
+    def from_geojson(  # noqa: C901
+        cls,
+        context: GeoJSONGeometryCollection
+        | GeoJSONFeatureCollection
+        | SupportsGeoInterface,
+    ) -> GPX:
+        """Create a GPX instance from a `GeoJSON <https://geojson.org/>`_
+        `GeometryCollection <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.8>`_ object,
+        a `FeatureCollection <https://datatracker.ietf.org/doc/html/rfc7946#section-3.3>`_ object or from an
+        object which implements the `__geo_interface__` protocol -- a
+        GeoJSON-like protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
 
         Args:
-            geojson: The GeoJSON object.
+            context: A `GeoJSON <https://geojson.org/>`_ `GeometryCollection <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.8>`_ object, a `FeatureCollection <https://datatracker.ietf.org/doc/html/rfc7946#section-3.3>`_ object or an object which implements the `__geo_interface__` protocol.
 
         Returns:
             The GPX instance.
@@ -426,6 +447,11 @@ class GPX(Element):
         # create a new GPX object
         gpx = cls()
 
+        if isinstance(context, SupportsGeoInterface):
+            geojson = context.__geo_interface__
+        else:
+            geojson = context
+
         if isinstance(geojson, dict) and "type" in geojson:
             if geojson["type"] == "GeometryCollection":
                 for geometry in geojson["geometries"]:
@@ -435,10 +461,13 @@ class GPX(Element):
                         gpx.rtes.append(Route.from_geojson(geometry))
                     elif geometry["type"] == "MultiLineString":
                         gpx.trks.append(Track.from_geojson(geometry))
-                else:
-                    raise ValueError(f"Unsupported geometry type: {geometry['type']}")
+                    else:
+                        raise UnsupportedGeoJSONGeometryTypeError(
+                            f"The Geometry object type is unsupported: {geometry['type']}. Should be either a `Point`, `LineString` or `MultiLineString` object."
+                        )
             elif geojson["type"] == "FeatureCollection":
                 for feature in geojson["features"]:
+                    print(json.dumps(feature, indent=4, cls=CustomJSONEncoder))
                     if feature["geometry"]["type"] == "Point":
                         gpx.wpts.append(Waypoint.from_geojson(feature))
                     elif feature["geometry"]["type"] == "LineString":
@@ -446,8 +475,8 @@ class GPX(Element):
                     elif feature["geometry"]["type"] == "MultiLineString":
                         gpx.trks.append(Track.from_geojson(feature))
                     else:
-                        raise ValueError(
-                            f"Unsupported geometry type: {feature['geometry']['type']}"
+                        raise UnsupportedGeoJSONGeometryTypeError(
+                            f"The Geometry object type is unsupported: {feature['geometry']['type']}. Should be either a `Point`, `LineString` or `MultiLineString` object."
                         )
             else:
                 raise UnsupportedGeoJSONTypeError(
@@ -477,17 +506,29 @@ class GPX(Element):
         with open(geojson_file, encoding="utf-8") as fh:
             geojson = json.load(fh, parse_float=Decimal)
 
+        print(json.dumps(geojson, indent=4, cls=CustomJSONEncoder))
+
         return cls.from_geojson(geojson)
+
+    @overload
+    def to_geojson(
+        self, type: Literal["GeometryCollection"]
+    ) -> GeoJSONGeometryCollection:
+        ...
+
+    @overload
+    def to_geojson(
+        self, type: Literal["FeatureCollection"] = ...
+    ) -> GeoJSONFeatureCollection:
+        ...
 
     def to_geojson(
         self,
         type: Literal["GeometryCollection", "FeatureCollection"] = "FeatureCollection",
-    ) -> dict[str, Any]:
+    ) -> GeoJSONGeometryCollection | GeoJSONFeatureCollection:
         """Convert the GPX instance to a `GeoJSON <https://geojson.org/>`_ object.
 
-        By default, the GPX instance is converted to a GeoJSON `FeatureCollection`
-        object instead of a `GeometryCollection` object. This way, we can add
-        additional properties (i.e. metadata) to the GeoJSON object.
+        By default, the GPX instance is converted to a GeoJSON `FeatureCollection <https://datatracker.ietf.org/doc/html/rfc7946#section-3.3>`_ object instead of a `GeometryCollection <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.8>`_ object. This way, we can add additional properties (i.e. metadata) to the GeoJSON object.
 
         Args:
             type: The type of GeoJSON object to create. Defaults to `FeatureCollection`.
@@ -503,7 +544,7 @@ class GPX(Element):
             ]
 
             # construct the `GeometryCollection` object
-            geometry_collection_geojson = {
+            geometry_collection_geojson: GeoJSONGeometryCollection = {
                 "type": "GeometryCollection",
                 "bbox": self._geojson_bounds,
                 "geometries": geometries,
@@ -517,7 +558,7 @@ class GPX(Element):
         ]
 
         # construct the `FeatureCollection` object
-        feature_collection_geojson = {
+        feature_collection_geojson: GeoJSONFeatureCollection = {
             "type": "FeatureCollection",
             "bbox": self._geojson_bounds,
             "features": features,
@@ -532,9 +573,7 @@ class GPX(Element):
     ) -> None:
         """Convert the GPX instance to a `GeoJSON <https://geojson.org/>`_ file.
 
-        By default, the GPX instance is converted to a GeoJSON `FeatureCollection`
-        object instead of a `GeometryCollection` object. This way, we can add
-        additional properties (i.e. metadata) to the GeoJSON object.
+        By default, the GPX instance is converted to a GeoJSON `FeatureCollection <https://datatracker.ietf.org/doc/html/rfc7946#section-3.3>`_ object instead of a `GeometryCollection <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.8>`_ object. This way, we can add additional properties (i.e. metadata) to the GeoJSON object.
 
         Args:
             geojson_file: The file to write the GeoJSON object to.
@@ -544,13 +583,9 @@ class GPX(Element):
             json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
 
     @property
-    def __geo_interface__(self) -> dict[str, Any]:
-        """Represents the GPX instance as a GeoJSON-like `GeometryCollection`
-        object.
+    def __geo_interface__(self) -> GeoJSONGeometryCollection:
+        """Represents the GPX instance as a GeoJSON-like `GeometryCollection <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.8>`_ object.
 
-        Implements the `__geo_interface__` protocol -- a GeoJSON-like
-        protocol for geo-spatial (GIS) vector data. See the
-        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
-        for more details.
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like protocol for geo-spatial (GIS) vector data. See the `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_ for more details.
         """
         return self.to_geojson(type="GeometryCollection")

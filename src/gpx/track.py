@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Iterator, Literal, overload
 
 from lxml import etree
 
@@ -17,6 +17,7 @@ from .errors import InvalidGeoJSONError, UnsupportedGeoJSONTypeError
 from .link import Link
 from .track_segment import TrackSegment
 from .types import Latitude, Longitude
+from .typing import GeoJSONFeature, GeoJSONMultiLineString, SupportsGeoInterface
 from .utils import CustomJSONEncoder, filter_geojson_properties
 from .waypoint import Waypoint
 
@@ -180,14 +181,22 @@ class Track(Element):
         return min_lon, min_lat, max_lon, max_lat
 
     @classmethod
-    def from_geojson(cls, geojson: dict[str, Any]) -> Track:  # noqa: C901
-        """Create a track from a `GeoJSON <https://geojson.org/>`_ object.
+    def from_geojson(  # noqa: C901
+        cls, context: GeoJSONMultiLineString | GeoJSONFeature | SupportsGeoInterface
+    ) -> Track:
+        """Create a track from a `GeoJSON <https://geojson.org/>`_
+        `MultiLineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.5>`_ object,
+        a `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object or from an
+        object which implements the `__geo_interface__` protocol -- a
+        GeoJSON-like protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
 
         Args:
             geojson: The GeoJSON object.
 
-        Returns:
-            The track.
+        Args:
+            context: A `GeoJSON <https://geojson.org/>`_ `MultiLineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.5>`_ object, a `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object or an object which implements the `__geo_interface__` protocol.
 
         Raises:
             InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
@@ -195,6 +204,11 @@ class Track(Element):
         """
         # create a new Track object
         trk = cls()
+
+        if isinstance(context, SupportsGeoInterface):
+            geojson = context.__geo_interface__
+        else:
+            geojson = context
 
         if isinstance(geojson, dict) and "type" in geojson:
             if geojson["type"] == "MultiLineString":
@@ -210,26 +224,58 @@ class Track(Element):
                 geojson["type"] == "Feature"
                 and geojson["geometry"]["type"] == "MultiLineString"
             ):
-                if "coordinatesProperties" in geojson["properties"]:
-                    for segment_coordinates, segment_properties in zip(
-                        geojson["geometry"]["coordinates"],
-                        geojson["properties"]["coordinatesProperties"],
-                    ):
-                        trkseg = TrackSegment()
-
-                        for coordinates, properties in zip(
-                            segment_coordinates, segment_properties
+                if "properties" in geojson:
+                    if "coordinatesProperties" in geojson["properties"]:
+                        for segment_coordinates, segment_properties in zip(
+                            geojson["geometry"]["coordinates"],
+                            geojson["properties"]["coordinatesProperties"],
                         ):
-                            # create the track point and set the coordinates
-                            trkpt = Waypoint._geojson_from_coordinates(*coordinates)
+                            trkseg = TrackSegment()
 
-                            # set the properties
-                            trkpt._geojson_parse_properties(properties)
+                            for coordinates, properties in zip(
+                                segment_coordinates, segment_properties
+                            ):
+                                # create the track point and set the coordinates
+                                trkpt = Waypoint._geojson_from_coordinates(*coordinates)
 
-                            # add the track point to the track
-                            trkseg.trkpts.append(trkpt)
+                                # set the properties
+                                trkpt._geojson_parse_properties(properties)
 
-                        trk.trksegs.append(trkseg)
+                                # add the track point to the track
+                                trkseg.trkpts.append(trkpt)
+
+                            trk.trksegs.append(trkseg)
+                    else:
+                        for segment_coordinates in geojson["geometry"]["coordinates"]:
+                            trkseg = TrackSegment()
+
+                            for coordinates in segment_coordinates:
+                                trkseg.trkpts.append(
+                                    Waypoint._geojson_from_coordinates(*coordinates)
+                                )
+
+                            trk.trksegs.append(trkseg)
+                    # set the properties
+                    if (name := geojson["properties"].get("name")) is not None:
+                        trk.name = name
+
+                    if (cmt := geojson["properties"].get("cmt")) is not None:
+                        trk.cmt = cmt
+
+                    if (desc := geojson["properties"].get("desc")) is not None:
+                        trk.desc = desc
+
+                    if (src := geojson["properties"].get("src")) is not None:
+                        trk.src = src
+
+                    for link in geojson["properties"].get("links", []):
+                        trk.links.append(Link.from_dict(link))
+
+                    if (number := geojson["properties"].get("number")) is not None:
+                        trk.number = number
+
+                    if (type := geojson["properties"].get("type")) is not None:
+                        trk.type = type
                 else:
                     for segment_coordinates in geojson["geometry"]["coordinates"]:
                         trkseg = TrackSegment()
@@ -241,36 +287,14 @@ class Track(Element):
 
                         trk.trksegs.append(trkseg)
 
-                # set the properties
-                if (name := geojson["properties"].get("name")) is not None:
-                    trk.name = name
-
-                if (cmt := geojson["properties"].get("cmt")) is not None:
-                    trk.cmt = cmt
-
-                if (desc := geojson["properties"].get("desc")) is not None:
-                    trk.desc = desc
-
-                if (src := geojson["properties"].get("src")) is not None:
-                    trk.src = src
-
-                for link in geojson["properties"].get("links", []):
-                    trk.links.append(Link.from_dict(link))
-
-                if (number := geojson["properties"].get("number")) is not None:
-                    trk.number = number
-
-                if (type := geojson["properties"].get("type")) is not None:
-                    trk.type = type
-
                 return trk
             else:
                 raise UnsupportedGeoJSONTypeError(
-                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `MultiLineString` or a `Feature` object."
+                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `MultiLineString` object or a `Feature` object containing a `MultiLineString` geometry."
                 )
         else:
             raise InvalidGeoJSONError(
-                "The GeoJSON object is invalid. Should be a either a `MultiLineString` or a `Feature` object."
+                "The GeoJSON object is invalid. Should be a either a GeoJSON `MultiLineString` object or a GeoJSON `Feature` object containing a `MultiLineString` geometry."
             )
 
     @classmethod
@@ -292,13 +316,21 @@ class Track(Element):
 
         return cls.from_geojson(geojson)
 
+    @overload
+    def to_geojson(self, type: Literal["MultiLineString"]) -> GeoJSONMultiLineString:
+        ...
+
+    @overload
+    def to_geojson(self, type: Literal["Feature"] = ...) -> GeoJSONFeature:
+        ...
+
     def to_geojson(
         self, type: Literal["MultiLineString", "Feature"] = "Feature"
-    ) -> dict[str, Any]:
+    ) -> GeoJSONMultiLineString | GeoJSONFeature:
         """Convert the track to a `GeoJSON <https://geojson.org/>`_ object.
 
-        By default, the track is converted to a GeoJSON `Feature` object instead
-        of a `MultiLineString` object. This way, we can add additional
+        By default, the track is converted to a GeoJSON `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object instead
+        of a `MultiLineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.5>`_ object. This way, we can add additional
         properties (i.e. metadata) to the GeoJSON object.
 
         Args:
@@ -314,7 +346,7 @@ class Track(Element):
         ]
 
         # construct the `MultiLineString` geometry
-        multilinestring_geojson = {
+        multilinestring_geojson: GeoJSONMultiLineString = {
             "type": "MultiLineString",
             "bbox": self._geojson_bounds,
             "coordinates": coordinates,
@@ -345,12 +377,14 @@ class Track(Element):
         if any([any(cp) for cp in coordinates_properties]):
             properties["coordinatesProperties"] = coordinates_properties
 
-        # construct the `Feature` object
-        feature_geojson = {
+        # construct the `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object
+        feature_geojson: GeoJSONFeature = {
             "type": "Feature",
             "geometry": multilinestring_geojson,
-            "properties": properties if properties else None,
         }
+
+        if properties:
+            feature_geojson["properties"] = properties
 
         return feature_geojson
 
@@ -361,8 +395,8 @@ class Track(Element):
     ) -> None:
         """Convert the track to a `GeoJSON <https://geojson.org/>`_ file.
 
-        By default, the track is converted to a GeoJSON `Feature` object instead
-        of a `MultiLineString` object. This way, we can add additional
+        By default, the track is converted to a GeoJSON `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object instead
+        of a `MultiLineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.5>`_ object. This way, we can add additional
         properties (i.e. metadata) to the GeoJSON object.
 
         Args:
@@ -373,13 +407,10 @@ class Track(Element):
             json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
 
     @property
-    def __geo_interface__(self) -> dict[str, Any]:
-        """Represents the track as a GeoJSON-like `MultiLineString` object.
+    def __geo_interface__(self) -> GeoJSONMultiLineString:
+        """Represents the track as a GeoJSON-like `MultiLineString <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.5>`_ object.
 
-        Implements the `__geo_interface__` protocol -- a GeoJSON-like
-        protocol for geo-spatial (GIS) vector data. See the
-        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
-        for more details.
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like protocol for geo-spatial (GIS) vector data. See the `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_ for more details.
         """
         return self.to_geojson(type="MultiLineString")
 

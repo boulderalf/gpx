@@ -6,15 +6,19 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from math import atan2, cos, radians, sin, sqrt
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 from dateutil.parser import isoparse
 from lxml import etree
 
 from .element import Element
-from .errors import InvalidGeoJSONError, UnsupportedGeoJSONTypeError
+from .errors import (
+    InvalidGeoJSONError,
+    UnsupportedGeoJSONTypeError,
+)
 from .link import Link
 from .types import Degrees, DGPSStation, Fix, Latitude, Longitude
+from .typing import GeoJSONFeature, GeoJSONPoint, SupportsGeoInterface
 from .utils import CustomJSONEncoder, filter_geojson_properties, format_datetime
 
 
@@ -303,7 +307,10 @@ class Waypoint(Element):
 
     @classmethod
     def _geojson_from_coordinates(
-        cls, lon: float, lat: float, ele: float | None = None
+        cls,
+        lon: float | Decimal,
+        lat: float | Decimal,
+        ele: float | Decimal | None = None,
     ) -> Waypoint:
         """Create a waypoint from the given coordinates.
 
@@ -374,11 +381,19 @@ class Waypoint(Element):
             self.dgpsid = DGPSStation(dgpsid)
 
     @classmethod
-    def from_geojson(cls, geojson: dict[str, Any]) -> Waypoint:
-        """Create a waypoint from a `GeoJSON <https://geojson.org/>`_ object.
+    def from_geojson(
+        cls, context: GeoJSONPoint | GeoJSONFeature | SupportsGeoInterface
+    ) -> Waypoint:
+        """Create a waypoint from a `GeoJSON <https://geojson.org/>`_
+        `Point <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.2>`_ object,
+        a `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object or from an
+        object which implements the `__geo_interface__` protocol -- a
+        GeoJSON-like protocol for geo-spatial (GIS) vector data. See the
+        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
+        for more details.
 
         Args:
-            geojson: The GeoJSON object.
+            context: A `GeoJSON <https://geojson.org/>`_ `Point <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.2>`_ object, a `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object or an object which implements the `__geo_interface__` protocol.
 
         Returns:
             The waypoint.
@@ -387,6 +402,11 @@ class Waypoint(Element):
             InvalidGeoJSONError: If the GeoJSON object is not a valid GeoJSON object.
             UnsupportedGeoJSONTypeError: If the GeoJSON object type is unsupported.
         """
+        if isinstance(context, SupportsGeoInterface):
+            geojson = context.__geo_interface__
+        else:
+            geojson = context
+
         if isinstance(geojson, dict) and "type" in geojson:
             if geojson["type"] == "Point":
                 return cls._geojson_from_coordinates(*geojson["coordinates"])
@@ -397,16 +417,17 @@ class Waypoint(Element):
                 wpt = cls._geojson_from_coordinates(*geojson["geometry"]["coordinates"])
 
                 # set the properties
-                wpt._geojson_parse_properties(geojson["properties"])
+                if "properties" in geojson:
+                    wpt._geojson_parse_properties(geojson["properties"])
 
                 return wpt
             else:
                 raise UnsupportedGeoJSONTypeError(
-                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `Point` or a `Feature` object."
+                    f"The GeoJSON object type is unsupported: {geojson['type']}. Should be either a `Point` object or a `Feature` object containing a `Point` geometry."
                 )
         else:
             raise InvalidGeoJSONError(
-                "The GeoJSON object is invalid. Should be a either a `Point` or a `Feature` object."
+                "The GeoJSON object is invalid. Should be a either a GeoJSON `Point` object or a GeoJSON `Feature` object containing a `Point` geometry."
             )
 
     @classmethod
@@ -428,13 +449,21 @@ class Waypoint(Element):
 
         return cls.from_geojson(geojson)
 
+    @overload
+    def to_geojson(self, type: Literal["Point"]) -> GeoJSONPoint:
+        ...
+
+    @overload
+    def to_geojson(self, type: Literal["Feature"] = ...) -> GeoJSONFeature:
+        ...
+
     def to_geojson(
         self, type: Literal["Point", "Feature"] = "Feature"
-    ) -> dict[str, Any]:
+    ) -> GeoJSONPoint | GeoJSONFeature:
         """Convert the waypoint to a `GeoJSON <https://geojson.org/>`_ object.
 
-        By default, the waypoint is converted to a GeoJSON `Feature` object
-        instead of a `Point` object. This way, we can add additional properties
+        By default, the waypoint is converted to a GeoJSON `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object
+        instead of a `Point <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.2>`_ object. This way, we can add additional properties
         (i.e. metadata) to the GeoJSON object.
 
         Args:
@@ -447,7 +476,7 @@ class Waypoint(Element):
         coordinates = self._geojson_coordinates
 
         # construct the `Point` geometry
-        point_geojson = {
+        point_geojson: GeoJSONPoint = {
             "type": "Point",
             "coordinates": coordinates,
         }
@@ -458,12 +487,14 @@ class Waypoint(Element):
         # construct the properties
         properties = self._geojson_properties
 
-        # construct the `Feature` object
-        feature_geojson = {
+        # construct the `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object
+        feature_geojson: GeoJSONFeature = {
             "type": "Feature",
             "geometry": point_geojson,
-            "properties": properties if properties else None,
         }
+
+        if properties:
+            feature_geojson["properties"] = properties
 
         return feature_geojson
 
@@ -472,8 +503,8 @@ class Waypoint(Element):
     ) -> None:
         """Convert the waypoint to a `GeoJSON <https://geojson.org/>`_ file.
 
-        By default, the waypoint is converted to a GeoJSON `Feature` object
-        instead of a `Point` object. This way, we can add additional properties
+        By default, the waypoint is converted to a GeoJSON `Feature <https://datatracker.ietf.org/doc/html/rfc7946#section-3.2>`_ object
+        instead of a `Point <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.2>`_ object. This way, we can add additional properties
         (i.e. metadata) to the GeoJSON object.
 
         Args:
@@ -484,13 +515,10 @@ class Waypoint(Element):
             json.dump(self.to_geojson(type=type), fh, indent=4, cls=CustomJSONEncoder)
 
     @property
-    def __geo_interface__(self) -> dict[str, Any]:
-        """Represents the waypoint as a GeoJSON-like `Point` object.
+    def __geo_interface__(self) -> GeoJSONPoint:
+        """Represents the waypoint as a GeoJSON-like `Point <https://datatracker.ietf.org/doc/html/rfc7946#section-3.1.2>`_ object.
 
-        Implements the `__geo_interface__` protocol -- a GeoJSON-like
-        protocol for geo-spatial (GIS) vector data. See the
-        `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_
-        for more details.
+        Implements the `__geo_interface__` protocol -- a GeoJSON-like protocol for geo-spatial (GIS) vector data. See the `__geo_interface__ specification <https://gist.github.com/sgillies/2217756>`_ for more details.
         """
         return self.to_geojson(type="Point")
 

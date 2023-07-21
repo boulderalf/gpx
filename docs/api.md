@@ -108,6 +108,13 @@
     :members:
 ```
 
+## `gpx.typing` Module
+
+```{eval-rst}
+.. automodule:: gpx.typing
+    :members:
+```
+
 ## `gpx.utils` Module
 
 ```{eval-rst}

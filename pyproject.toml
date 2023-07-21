@@ -24,6 +24,7 @@ requires-python = "~=3.7"
 dependencies = [
     "lxml",
     "python-dateutil",
+    "typing-extensions",
 ]
 dynamic = ["version", "description"]
 
