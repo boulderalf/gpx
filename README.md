@@ -65,8 +65,8 @@ Check out the [PyGPX documentation](https://gpx.readthedocs.io/en/stable/) for t
 >>>
 >>> # add a new waypoint
 >>> wpt = Waypoint()
->>> wpt.latitude = 52.123
->>> wpt.longitude = 4.123
+>>> wpt.lat = 52.123
+>>> wpt.lon = 4.123
 >>> gpx.waypoints.append(wpt)
 ```
 
